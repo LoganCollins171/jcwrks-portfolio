@@ -1,13 +1,296 @@
 <!doctype html>
 <html lang="en">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="robots" content="noindex" />
-    <title>jcwrks — Manage Photos</title>
-  </head>
-  <body>
-    <!-- Sveltia CMS: modern, free, no watermark. Reads ./config.yml -->
-    <script src="https://unpkg.com/@sveltia/cms/dist/sveltia-cms.js"></script>
-  </body>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="robots" content="noindex" />
+  <title>jc_wrks — Add Photos</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Allura&family=Inter+Tight:wght@500;600;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --ink:#ffffff; --card:#f7f7f8; --panel:#f0f0f2; --line:#e6e6e9;
+      --bone:#131316; --fog:#6b6b73; --accent:#7c3aed; --accent-bright:#8b5cf6;
+      --ok:#16a34a; --err:#dc2626;
+      --display:"Inter Tight",ui-sans-serif,system-ui,sans-serif;
+      --body:"Inter",ui-sans-serif,system-ui,sans-serif;
+    }
+    * { box-sizing:border-box; }
+    html,body { margin:0; }
+    body {
+      font-family:var(--body); color:var(--bone); background:var(--ink);
+      background-image:
+        radial-gradient(900px 600px at 85% -5%, rgba(124,58,237,.05), transparent 70%),
+        radial-gradient(700px 500px at 0% 100%, rgba(124,58,237,.035), transparent 70%);
+      background-attachment:fixed; min-height:100vh;
+      -webkit-font-smoothing:antialiased;
+    }
+    .wrap { max-width:720px; margin:0 auto; padding:32px 20px 80px; }
+    header { display:flex; align-items:baseline; gap:12px; margin-bottom:6px; }
+    .brand { font-family:var(--display); font-weight:700; font-size:28px; letter-spacing:-.02em; }
+    .brand em { font-family:"Allura",cursive; font-style:normal; color:var(--accent); font-size:34px; }
+    .sub { color:var(--fog); font-size:15px; margin:0 0 28px; }
+    label { display:block; font-family:var(--display); font-weight:600; font-size:14px; margin:0 0 8px; }
+    .field { margin-bottom:22px; }
+    input[type=password], select {
+      width:100%; font-family:var(--body); font-size:16px; color:var(--bone);
+      background:var(--card); border:1px solid var(--line); border-radius:12px;
+      padding:14px 16px; outline:none; transition:border-color .2s, box-shadow .2s;
+      appearance:none; -webkit-appearance:none;
+    }
+    select { background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='20' height='20' viewBox='0 0 24 24' fill='none' stroke='%236b6b73' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E"); background-repeat:no-repeat; background-position:right 14px center; padding-right:44px; }
+    input:focus, select:focus { border-color:var(--accent); box-shadow:0 0 0 3px rgba(124,58,237,.12); }
+    .drop {
+      border:2px dashed var(--line); border-radius:16px; background:var(--card);
+      padding:44px 20px; text-align:center; cursor:pointer;
+      transition:border-color .2s, background .2s;
+    }
+    .drop:hover, .drop.over { border-color:var(--accent); background:#faf8ff; }
+    .drop .big { font-family:var(--display); font-weight:600; font-size:17px; margin:0 0 4px; }
+    .drop .small { color:var(--fog); font-size:13px; margin:0; }
+    .drop svg { color:var(--accent); margin-bottom:10px; }
+    #list { list-style:none; margin:22px 0 0; padding:0; display:flex; flex-direction:column; gap:10px; }
+    .row { display:flex; align-items:center; gap:12px; background:var(--card); border:1px solid var(--line); border-radius:12px; padding:8px 10px; }
+    .row img { width:46px; height:46px; object-fit:cover; border-radius:8px; background:var(--panel); flex:none; }
+    .row .meta { flex:1; min-width:0; }
+    .row .nm { font-size:14px; font-weight:500; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+    .row .st { font-size:12px; color:var(--fog); margin-top:2px; }
+    .row .st.ok { color:var(--ok); } .row .st.err { color:var(--err); }
+    .row button.x { flex:none; border:none; background:none; color:var(--fog); font-size:20px; cursor:pointer; padding:4px 8px; line-height:1; border-radius:8px; }
+    .row button.x:hover { color:var(--err); background:var(--panel); }
+    .actions { margin-top:26px; display:flex; align-items:center; gap:14px; flex-wrap:wrap; }
+    button.go {
+      font-family:var(--display); font-weight:600; font-size:16px; color:#fff;
+      background:var(--accent); border:none; border-radius:9999px; padding:14px 30px;
+      cursor:pointer; transition:background .2s, transform .1s;
+    }
+    button.go:hover { background:var(--accent-bright); }
+    button.go:active { transform:scale(.98); }
+    button.go:disabled { background:var(--fog); opacity:.5; cursor:not-allowed; }
+    .note { font-size:13px; color:var(--fog); }
+    .banner { border-radius:12px; padding:14px 16px; font-size:14.5px; margin-top:22px; display:none; }
+    .banner.show { display:block; }
+    .banner.ok { background:#f0fdf4; border:1px solid #bbf7d0; color:#15803d; }
+    .banner.err { background:#fef2f2; border:1px solid #fecaca; color:#b91c1c; }
+    .hint { font-size:12.5px; color:var(--fog); margin-top:8px; }
+    a.back { color:var(--fog); font-size:13px; text-decoration:none; }
+    a.back:hover { color:var(--accent); }
+    .foot { margin-top:40px; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <span class="brand">jc<em>_</em>wrks</span>
+    </header>
+    <p class="sub">Add photos to your galleries. They go live a couple minutes after you upload.</p>
+
+    <div class="field">
+      <label for="pw">Password</label>
+      <input id="pw" type="password" autocomplete="current-password" placeholder="Enter your password" />
+    </div>
+
+    <div class="field">
+      <label for="gallery">Gallery</label>
+      <select id="gallery">
+        <optgroup label="Sports">
+          <option value="basketball">Basketball</option>
+          <option value="football">Football</option>
+          <option value="soccer">Soccer</option>
+          <option value="baseball">Baseball</option>
+          <option value="softball">Softball</option>
+          <option value="hockey">Hockey</option>
+          <option value="track">Track</option>
+        </optgroup>
+        <optgroup label="Other">
+          <option value="portraits">Portraits</option>
+          <option value="landscape">Landscape</option>
+          <option value="cars">Cars</option>
+          <option value="graphics">Graphics</option>
+        </optgroup>
+      </select>
+    </div>
+
+    <div class="field">
+      <label>Photos</label>
+      <div class="drop" id="drop">
+        <svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+        <p class="big">Tap to choose photos, or drag them here</p>
+        <p class="small">JPG or PNG straight off your camera is fine — they're shrunk for the web automatically.</p>
+      </div>
+      <input id="file" type="file" accept="image/*" multiple hidden />
+      <p class="hint">Tip: you can add a whole shoot at once. Everything uploads as a single update.</p>
+    </div>
+
+    <ul id="list"></ul>
+
+    <div class="actions">
+      <button class="go" id="go" disabled>Upload photos</button>
+      <span class="note" id="count"></span>
+    </div>
+
+    <div class="banner" id="banner"></div>
+
+    <div class="foot"><a class="back" href="/">← Back to site</a></div>
+  </div>
+
+  <script>
+    const MAX_EDGE = 2000;      // matches the site's optimizer
+    const QUALITY = 0.85;
+    const CONCURRENCY = 3;
+
+    const $ = (id) => document.getElementById(id);
+    const pw = $("pw"), gallery = $("gallery"), drop = $("drop"), fileInput = $("file");
+    const list = $("list"), go = $("go"), count = $("count"), banner = $("banner");
+
+    let items = [];  // { id, file, name, url, status, statusText, sha }
+    let uploading = false;
+    let nextId = 1;
+
+    // Remember the password for the session so a refresh doesn't lose it.
+    try { pw.value = sessionStorage.getItem("jcwrks_pw") || ""; } catch {}
+
+    drop.addEventListener("click", () => fileInput.click());
+    fileInput.addEventListener("change", () => { addFiles(fileInput.files); fileInput.value = ""; });
+    ["dragenter","dragover"].forEach(e => drop.addEventListener(e, ev => { ev.preventDefault(); drop.classList.add("over"); }));
+    ["dragleave","drop"].forEach(e => drop.addEventListener(e, ev => { ev.preventDefault(); drop.classList.remove("over"); }));
+    drop.addEventListener("drop", ev => addFiles(ev.dataTransfer.files));
+
+    function addFiles(fileList) {
+      for (const file of fileList) {
+        if (!file.type.startsWith("image/")) continue;
+        const stem = (file.name.replace(/\.[^.]*$/, "") || "photo");
+        items.push({ id: nextId++, file, name: stem + ".webp", url: URL.createObjectURL(file), status: "ready", statusText: "Ready" });
+      }
+      render();
+    }
+
+    function removeItem(id) {
+      items = items.filter(i => i.id !== id);
+      render();
+    }
+
+    function render() {
+      list.innerHTML = "";
+      for (const it of items) {
+        const li = document.createElement("li");
+        li.className = "row";
+        const stClass = it.status === "done" ? "ok" : it.status === "error" ? "err" : "";
+        li.innerHTML = `
+          <img src="${it.url}" alt="" />
+          <div class="meta">
+            <div class="nm">${escapeHtml(it.name)}</div>
+            <div class="st ${stClass}">${escapeHtml(it.statusText)}</div>
+          </div>`;
+        if (!uploading) {
+          const x = document.createElement("button");
+          x.className = "x"; x.type = "button"; x.textContent = "×"; x.title = "Remove";
+          x.onclick = () => removeItem(it.id);
+          li.appendChild(x);
+        }
+        list.appendChild(li);
+      }
+      const n = items.length;
+      count.textContent = n ? `${n} photo${n === 1 ? "" : "s"} selected` : "";
+      go.disabled = uploading || n === 0;
+      go.textContent = uploading ? "Uploading…" : "Upload photos";
+    }
+
+    function escapeHtml(s) { return s.replace(/[&<>"']/g, c => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;" }[c])); }
+
+    function showBanner(kind, msg) {
+      banner.className = "banner show " + kind;
+      banner.textContent = msg;
+    }
+    function hideBanner() { banner.className = "banner"; }
+
+    // Shrink a photo to a <=2000px webp, return base64 (no data: prefix).
+    async function shrink(file) {
+      const bitmap = await createImageBitmap(file);
+      let { width, height } = bitmap;
+      const scale = Math.min(1, MAX_EDGE / Math.max(width, height));
+      width = Math.round(width * scale); height = Math.round(height * scale);
+      const canvas = document.createElement("canvas");
+      canvas.width = width; canvas.height = height;
+      canvas.getContext("2d").drawImage(bitmap, 0, 0, width, height);
+      bitmap.close && bitmap.close();
+      const blob = await new Promise((res, rej) =>
+        canvas.toBlob(b => b ? res(b) : rej(new Error("Could not process this image")), "image/webp", QUALITY));
+      const buf = await blob.arrayBuffer();
+      let binary = ""; const bytes = new Uint8Array(buf);
+      for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+      return btoa(binary);
+    }
+
+    async function post(body) {
+      const res = await fetch("/.netlify/functions/upload", {
+        method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || `Error ${res.status}`);
+      return data;
+    }
+
+    async function uploadOne(it, password) {
+      try {
+        it.status = "working"; it.statusText = "Shrinking…"; render();
+        const dataBase64 = await shrink(it.file);
+        it.statusText = "Uploading…"; render();
+        const { sha } = await post({ op: "blob", password, dataBase64 });
+        it.sha = sha; it.status = "done"; it.statusText = "Uploaded ✓"; render();
+      } catch (err) {
+        it.status = "error"; it.statusText = err.message || "Failed"; render();
+      }
+    }
+
+    async function runPool(pending, password) {
+      let idx = 0;
+      const worker = async () => { while (idx < pending.length) { await uploadOne(pending[idx++], password); } };
+      await Promise.all(Array.from({ length: Math.min(CONCURRENCY, pending.length) }, worker));
+    }
+
+    go.addEventListener("click", async () => {
+      hideBanner();
+      const password = pw.value.trim();
+      if (!password) { showBanner("err", "Enter your password first."); pw.focus(); return; }
+      if (!items.length) return;
+
+      uploading = true; render();
+      try { sessionStorage.setItem("jcwrks_pw", password); } catch {}
+
+      const pending = items.filter(i => i.status !== "done");
+      await runPool(pending, password);
+
+      const done = items.filter(i => i.status === "done" && i.sha);
+      const failed = items.filter(i => i.status === "error");
+
+      if (!done.length) {
+        uploading = false; render();
+        showBanner("err", failed.some(f => /password/i.test(f.statusText))
+          ? "Wrong password — check it and try again."
+          : "Nothing uploaded. " + (failed[0]?.statusText || "Please try again."));
+        return;
+      }
+
+      try {
+        const g = gallery.value;
+        const result = await post({ op: "commit", password, gallery: g, files: done.map(d => ({ name: d.name, sha: d.sha })) });
+        uploading = false;
+        const gName = gallery.options[gallery.selectedIndex].text;
+        let msg = `Done! ${result.committed} photo${result.committed === 1 ? "" : "s"} added to ${gName}. They'll be live on the site in a minute or two.`;
+        if (failed.length) msg += ` (${failed.length} couldn't be processed — try re-exporting those as JPG.)`;
+        showBanner("ok", msg);
+        // Clear the uploaded ones; keep any that failed so Jacob can retry.
+        items = items.filter(i => i.status === "error").map(i => (i.status = "ready", i.statusText = "Ready", i));
+        render();
+      } catch (err) {
+        uploading = false; render();
+        showBanner("err", "Photos uploaded but saving failed: " + (err.message || "unknown error") + ". Try Upload again.");
+      }
+    });
+
+    render();
+  </script>
+</body>
 </html>
