@@ -15,7 +15,7 @@
 //   ADMIN_PASSWORD   the password Jacob types at /admin
 //   GH_UPLOAD_TOKEN  a GitHub token with Contents: read/write on this repo
 
-const OWNER = "BARRELLABS";
+const OWNER = "LoganCollins171";
 const REPO = "jcwrks-portfolio";
 // Netlify builds `main`, so uploads go straight live. Overridable for testing.
 const BRANCH = process.env.UPLOAD_BRANCH || "main";
