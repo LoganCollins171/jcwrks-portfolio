@@ -1,70 +1,46 @@
-# Photo CMS — how Jacob manages galleries
+# Photo uploader — how Jacob manages galleries
 
-The site has a built-in content manager so Jacob can add/remove gallery photos
-himself — no code. It's **Sveltia CMS** (free, no watermark).
+Jacob adds photos himself at **/admin** (e.g. `jcwrks.com/admin`) with a simple
+**password** — no GitHub account, no login accounts at all.
 
-- Admin page: **/admin** (e.g. `jcwrks.com/admin`)
-- He picks a gallery (Basketball, Portraits, etc.), uploads photos, hits publish.
-- Publishing saves the photos to the site's GitHub repo, which auto-rebuilds &
-  redeploys. Photos appear live in a minute or two.
+## How it works
+- He goes to `/admin`, types the password, picks a gallery, drags in photos,
+  and hits **Upload photos**.
+- Each photo is shrunk to a ~2000px webp **in his browser** first (Canon files
+  are ~8MB; this makes them ~300KB so uploads are fast and never choke).
+- A Netlify function (`netlify/functions/upload.mjs`) commits the whole batch to
+  the repo's `main` branch in one commit, using a server-side GitHub token.
+- Netlify rebuilds once and the photos are live in a minute or two.
 
-Galleries are stored in `src/data/galleries/<slug>.json`; uploaded photos go to
-`public/galleries/<slug>/`. The site reads these automatically.
+The site renders **any image file** sitting in `public/galleries/<slug>/`
+(see `src/lib/galleries.ts`), so committing the files there is all it takes.
+The per-gallery JSON in `src/data/galleries/<slug>.json` is only used to pin
+ORDER and CAPTIONS for curated photos; uploaded photos are appended after those.
 
----
+## Configuration (Netlify → Site settings → Environment variables)
+- `ADMIN_PASSWORD` — the password Jacob types at `/admin`.
+- `GH_UPLOAD_TOKEN` — a GitHub fine-grained PAT with **Contents: Read and write**
+  on `LoganCollins171/jcwrks-portfolio` only (no expiration). Created for the
+  `jcwrks uploader` token. To rotate: make a new PAT with the same scope, update
+  this env var, and redeploy.
 
-## ✅ Already done (works now)
-- All 11 galleries are wired to the CMS and render real photos with a lightbox.
-- Empty galleries show "Photos coming soon."
-- `/admin` loads. Config is at `public/admin/config.yml`.
-- Verified locally: build passes, galleries render, admin serves.
+Both must be present or the uploader returns "Uploader not configured".
+Changing either takes effect on the next deploy.
 
-## 🔧 To make the LOGIN work (needs your accounts — do at launch)
-The CMS login uses GitHub, so the site must be on GitHub + deployed first.
+## Notes
+- **No GitHub account needed for Jacob** — the token does the committing for him.
+- Uploads go straight to `main`, so each upload session is exactly one Netlify
+  deploy. (The old Sveltia CMS committed every file separately and burned deploy
+  credits; that's why it was replaced.)
+- Removing a photo isn't in the `/admin` UI yet — delete the file from
+  `public/galleries/<slug>/` in GitHub, or ask.
+- Retired: the old Sveltia CMS (`public/admin/config.yml`) and the
+  `staging` branch + `publish.yml` / `shrink-photos.yml` / `sync-staging.yml`
+  workflows. They're unused now and can be deleted whenever.
 
-1. **Put the project on GitHub**
-   - Create a repo (e.g. `jcwrks-portfolio`), push this folder to it.
-
-2. **Deploy** (Netlify or Cloudflare Pages — both free)
-   - Connect the GitHub repo; build command `npm run build`, output `dist`.
-   - Point his domain at it.
-
-3. **Set the repo in the CMS config**
-   - In `public/admin/config.yml`, change `repo: OWNER/REPO` to the real repo
-     (e.g. `jasoncombs/jcwrks-portfolio`) and confirm `branch` (main/master).
-
-4. **Turn on GitHub login for Sveltia**
-   - Easiest: deploy the tiny **`sveltia-cms-auth`** Cloudflare Worker (free) and
-     create a GitHub OAuth App — follow:
-     https://github.com/sveltia/sveltia-cms#github-backend
-   - Add the Worker URL to config.yml under `backend` as documented there.
-   - (If hosting on Netlify, you can instead use Netlify's GitHub OAuth provider.)
-
-5. **Add Jacob as a collaborator** on the GitHub repo so his login can publish.
-
-After that, Jacob goes to `yoursite.com/admin`, clicks "Login with GitHub," and
-manages photos.
-
----
-
-## 🧪 Test the editor locally (optional, before deploy)
-You can try the editing experience without GitHub:
+## Test the uploader locally
 ```
-# terminal 1
-npx @sveltia/cms-server      # local backend proxy (or: npx decap-server)
-# terminal 2
 npm run dev
+# open http://localhost:4321/admin/  (the function only runs on Netlify, so
+# real uploads need the deployed site; use `netlify dev` to run the function locally)
 ```
-Open http://localhost:4321/admin/ — it uses your local files (the
-`local_backend: true` line in config.yml). Add a photo, save, and it writes to
-the JSON + public/galleries on disk. **Remove `local_backend: true` is NOT needed**
-— it's ignored in production.
-
----
-
-## Note
-- `public/galleries/basketball/test-1.jpg` + `test-2.jpg` are TEST photos I added
-  to prove it works. Delete them (or let Jacob replace them) — basketball.json
-  points to them.
-- Uploaded photos aren't auto-compressed. Tell Jacob to export web-size (long edge
-  ~2000px) so the site stays fast.
