@@ -68,6 +68,9 @@
     button.go:hover { background:var(--accent-bright); }
     button.go:active { transform:scale(.98); }
     button.go:disabled { background:var(--fog); opacity:.5; cursor:not-allowed; }
+    button.go.ghost { background:#fff; color:var(--accent); border:1.5px solid var(--accent); }
+    button.go.ghost:hover:not(:disabled) { background:var(--accent); color:#fff; }
+    button.go.ghost:disabled { color:var(--fog); border-color:var(--line); background:#fff; }
     .note { font-size:13px; color:var(--fog); }
     .banner { border-radius:12px; padding:14px 16px; font-size:14.5px; margin-top:22px; display:none; }
     .banner.show { display:block; }
@@ -77,6 +80,11 @@
     a.back { color:var(--fog); font-size:13px; text-decoration:none; }
     a.back:hover { color:var(--accent); }
     .foot { margin-top:40px; }
+    .publish { margin-top:34px; padding-top:28px; border-top:1px solid var(--line); }
+    .pubrow { display:flex; align-items:center; justify-content:space-between; gap:16px; flex-wrap:wrap; }
+    .pubtitle { font-family:var(--display); font-weight:600; font-size:17px; }
+    .pubnote { color:var(--fog); font-size:13.5px; margin-top:3px; }
+    .pubnote.hot { color:var(--accent); font-weight:500; }
   </style>
 </head>
 <body>
@@ -84,7 +92,7 @@
     <header>
       <span class="brand">jc<em>_</em>wrks</span>
     </header>
-    <p class="sub">Add photos to your galleries. They go live a couple minutes after you upload.</p>
+    <p class="sub">Add photos to your galleries, then hit Publish to put them on the live site.</p>
 
     <div class="field">
       <label for="pw">Password</label>
@@ -120,17 +128,27 @@
         <p class="small">JPG or PNG straight off your camera is fine — they're shrunk for the web automatically.</p>
       </div>
       <input id="file" type="file" accept="image/*" multiple hidden />
-      <p class="hint">Tip: you can add a whole shoot at once. Everything uploads as a single update.</p>
+      <p class="hint">Tip: you can add a whole shoot at once. Nothing goes live until you Publish.</p>
     </div>
 
     <ul id="list"></ul>
 
     <div class="actions">
-      <button class="go" id="go" disabled>Upload photos</button>
+      <button class="go ghost" id="go" disabled>Upload photos</button>
       <span class="note" id="count"></span>
     </div>
 
     <div class="banner" id="banner"></div>
+
+    <div class="publish">
+      <div class="pubrow">
+        <div>
+          <div class="pubtitle">Publish to site</div>
+          <div class="pubnote" id="pendingNote">Enter your password to see what's waiting.</div>
+        </div>
+        <button class="go" id="pub" disabled>Publish to site</button>
+      </div>
+    </div>
 
     <div class="foot"><a class="back" href="/">← Back to site</a></div>
   </div>
@@ -143,9 +161,11 @@
     const $ = (id) => document.getElementById(id);
     const pw = $("pw"), gallery = $("gallery"), drop = $("drop"), fileInput = $("file");
     const list = $("list"), go = $("go"), count = $("count"), banner = $("banner");
+    const pub = $("pub"), pendingNote = $("pendingNote");
 
     let items = [];  // { id, file, name, url, status, statusText, sha }
     let uploading = false;
+    let publishing = false;
     let nextId = 1;
 
     // Remember the password for the session so a refresh doesn't lose it.
@@ -156,6 +176,7 @@
     ["dragenter","dragover"].forEach(e => drop.addEventListener(e, ev => { ev.preventDefault(); drop.classList.add("over"); }));
     ["dragleave","drop"].forEach(e => drop.addEventListener(e, ev => { ev.preventDefault(); drop.classList.remove("over"); }));
     drop.addEventListener("drop", ev => addFiles(ev.dataTransfer.files));
+    pw.addEventListener("change", () => { if (pw.value.trim()) refreshPending(); });
 
     function addFiles(fileList) {
       for (const file of fileList) {
@@ -166,10 +187,7 @@
       render();
     }
 
-    function removeItem(id) {
-      items = items.filter(i => i.id !== id);
-      render();
-    }
+    function removeItem(id) { items = items.filter(i => i.id !== id); render(); }
 
     function render() {
       list.innerHTML = "";
@@ -193,17 +211,36 @@
       }
       const n = items.length;
       count.textContent = n ? `${n} photo${n === 1 ? "" : "s"} selected` : "";
-      go.disabled = uploading || n === 0;
+      go.disabled = uploading || publishing || n === 0;
       go.textContent = uploading ? "Uploading…" : "Upload photos";
     }
 
     function escapeHtml(s) { return s.replace(/[&<>"']/g, c => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;" }[c])); }
 
-    function showBanner(kind, msg) {
-      banner.className = "banner show " + kind;
-      banner.textContent = msg;
-    }
+    function showBanner(kind, msg) { banner.className = "banner show " + kind; banner.textContent = msg; }
     function hideBanner() { banner.className = "banner"; }
+
+    function setPending(n) {
+      if (n === null || n === undefined) { pendingNote.textContent = ""; pub.disabled = true; return; }
+      if (n > 0) {
+        pendingNote.className = "pubnote hot";
+        pendingNote.textContent = `${n} photo${n === 1 ? "" : "s"} waiting to go live.`;
+        pub.disabled = publishing || uploading;
+      } else {
+        pendingNote.className = "pubnote";
+        pendingNote.textContent = "Nothing waiting — the site is up to date.";
+        pub.disabled = true;
+      }
+    }
+
+    async function refreshPending() {
+      const password = pw.value.trim();
+      if (!password) { pendingNote.textContent = "Enter your password to see what's waiting."; pub.disabled = true; return; }
+      try {
+        const { pending } = await post({ op: "pending", password });
+        setPending(pending);
+      } catch { /* leave the note as-is */ }
+    }
 
     // Shrink a photo to a <=2000px webp, return base64 (no data: prefix).
     async function shrink(file) {
@@ -256,7 +293,7 @@
       if (!password) { showBanner("err", "Enter your password first."); pw.focus(); return; }
       if (!items.length) return;
 
-      uploading = true; render();
+      uploading = true; render(); pub.disabled = true;
       try { sessionStorage.setItem("jcwrks_pw", password); } catch {}
 
       const pending = items.filter(i => i.status !== "done");
@@ -278,19 +315,44 @@
         const result = await post({ op: "commit", password, gallery: g, files: done.map(d => ({ name: d.name, sha: d.sha })) });
         uploading = false;
         const gName = gallery.options[gallery.selectedIndex].text;
-        let msg = `Done! ${result.committed} photo${result.committed === 1 ? "" : "s"} added to ${gName}. They'll be live on the site in a minute or two.`;
+        let msg = `Uploaded! ${result.committed} photo${result.committed === 1 ? "" : "s"} added to ${gName}. Hit “Publish to site” below when you're ready to make them live.`;
         if (failed.length) msg += ` (${failed.length} couldn't be processed — try re-exporting those as JPG.)`;
         showBanner("ok", msg);
         // Clear the uploaded ones; keep any that failed so Jacob can retry.
         items = items.filter(i => i.status === "error").map(i => (i.status = "ready", i.statusText = "Ready", i));
         render();
+        refreshPending();
       } catch (err) {
         uploading = false; render();
         showBanner("err", "Photos uploaded but saving failed: " + (err.message || "unknown error") + ". Try Upload again.");
       }
     });
 
+    pub.addEventListener("click", async () => {
+      hideBanner();
+      const password = pw.value.trim();
+      if (!password) { showBanner("err", "Enter your password first."); pw.focus(); return; }
+      publishing = true; pub.disabled = true; go.disabled = true;
+      pub.textContent = "Publishing…";
+      try {
+        const result = await post({ op: "publish", password });
+        publishing = false; pub.textContent = "Publish to site";
+        if (result.published > 0) {
+          showBanner("ok", `Published! ${result.published} photo${result.published === 1 ? "" : "s"} going live now — they'll show on the site in a minute or two.`);
+        } else {
+          showBanner("ok", "Everything's already live — nothing new to publish.");
+        }
+        setPending(0);
+        render();
+      } catch (err) {
+        publishing = false; pub.textContent = "Publish to site";
+        showBanner("err", /password/i.test(err.message) ? "Wrong password — check it and try again." : "Publish failed: " + (err.message || "unknown error"));
+        render();
+      }
+    });
+
     render();
+    if (pw.value.trim()) refreshPending();
   </script>
 </body>
 </html>

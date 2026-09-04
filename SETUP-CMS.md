@@ -5,17 +5,28 @@ Jacob adds photos himself at **/admin** (e.g. `jcwrks.com/admin`) with a simple
 
 ## How it works
 - He goes to `/admin`, types the password, picks a gallery, drags in photos,
-  and hits **Upload photos**.
+  and hits **Upload photos**. Then, when ready, he hits **Publish to site**.
 - Each photo is shrunk to a ~2000px webp **in his browser** first (Canon files
   are ~8MB; this makes them ~300KB so uploads are fast and never choke).
-- A Netlify function (`netlify/functions/upload.mjs`) commits the whole batch to
-  the repo's `main` branch in one commit, using a server-side GitHub token.
-- Netlify rebuilds once and the photos are live in a minute or two.
+- A Netlify function (`netlify/functions/upload.mjs`) commits the batch to the
+  **`staging`** branch, which Netlify never builds — so uploading costs no
+  deploys. **Publish** fast-forwards `main` to `staging` (or merges if code has
+  landed on main), which is the one and only deploy.
+- After Publish, Netlify rebuilds once and the photos are live in a minute or two.
+
+This staging-then-publish flow is deliberate: Jacob can upload as many times as
+he wants for free, and one Publish puts everything live in a single deploy. (The
+old Sveltia CMS made one deploy per photo and burned the monthly credits.)
 
 The site renders **any image file** sitting in `public/galleries/<slug>/`
 (see `src/lib/galleries.ts`), so committing the files there is all it takes.
 The per-gallery JSON in `src/data/galleries/<slug>.json` is only used to pin
 ORDER and CAPTIONS for curated photos; uploaded photos are appended after those.
+
+The function ops (all password-gated): `blob` (upload one photo), `commit`
+(save the batch to staging), `pending` (how many photos are waiting), `publish`
+(move main up to staging). Branch names are overridable via `UPLOAD_BRANCH` /
+`PROD_BRANCH` env vars (used only for testing).
 
 ## Configuration (Netlify → Site settings → Environment variables)
 - `ADMIN_PASSWORD` — the password Jacob types at `/admin`.
@@ -29,14 +40,14 @@ Changing either takes effect on the next deploy.
 
 ## Notes
 - **No GitHub account needed for Jacob** — the token does the committing for him.
-- Uploads go straight to `main`, so each upload session is exactly one Netlify
-  deploy. (The old Sveltia CMS committed every file separately and burned deploy
-  credits; that's why it was replaced.)
+- Uploads queue on `staging` (no deploy); **Publish** is the single deploy that
+  puts a whole batch live. `sync-staging.yml` still keeps `staging` level with
+  `main` after code changes, so the publish stays a clean fast-forward.
 - Removing a photo isn't in the `/admin` UI yet — delete the file from
   `public/galleries/<slug>/` in GitHub, or ask.
-- Retired: the old Sveltia CMS (`public/admin/config.yml`) and the
-  `staging` branch + `publish.yml` / `shrink-photos.yml` / `sync-staging.yml`
-  workflows. They're unused now and can be deleted whenever.
+- Retired: the old Sveltia CMS (`public/admin/config.yml`) and the manual
+  `publish.yml` / `shrink-photos.yml` GitHub Actions. `sync-staging.yml` is still
+  useful (keeps staging current). They can be cleaned up whenever.
 
 ## Test the uploader locally
 ```
