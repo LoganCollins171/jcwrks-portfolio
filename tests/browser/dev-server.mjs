@@ -39,21 +39,33 @@ const files = {
 };
 for (const slug of GALLERY_SLUGS) files[`src/data/galleries/${slug}.json`] = JSON.stringify({ images: [] }, null, 2) + "\n";
 const baseball = [];
-for (let i = 1; i <= 8; i++) {
+for (let i = 1; i <= (process.env.REAL_PHOTOS ? 0 : 8); i++) {
   const w = i % 3 === 0 ? 800 : 1200, h = i % 3 === 0 ? 1200 : 800;
   files[`public/galleries/baseball/TEST-${i}.webp`] = await labeled(i, { width: w, height: h });
   baseball.push({ src: `/galleries/baseball/TEST-${i}.webp`, alt: "" });
 }
-files["src/data/galleries/baseball.json"] = JSON.stringify({ images: baseball }, null, 2) + "\n";
-for (let i = 1; i <= 3; i++) files[`public/galleries/soccer/S-${i}.webp`] = await labeled(i + 20);
+if (baseball.length) files["src/data/galleries/baseball.json"] = JSON.stringify({ images: baseball }, null, 2) + "\n";
+for (let i = 1; i <= (process.env.REAL_PHOTOS ? 0 : 3); i++) files[`public/galleries/soccer/S-${i}.webp`] = await labeled(i + 20);
 // A long gallery (like basketball's 54) for scrolling / performance checks.
-const LONG = Number(process.env.LONG_GALLERY || 60);
+const LONG = process.env.REAL_PHOTOS ? 0 : Number(process.env.LONG_GALLERY || 60);
 const long = [];
 for (let i = 1; i <= LONG; i++) {
   files[`public/galleries/basketball/B-${i}.webp`] = await labeled(i, { width: 1600, height: i % 4 ? 1067 : 2000, hue: i * 11 });
   long.push({ src: `/galleries/basketball/B-${i}.webp`, alt: "" });
 }
-files["src/data/galleries/basketball.json"] = JSON.stringify({ images: long }, null, 2) + "\n";
+if (LONG) files["src/data/galleries/basketball.json"] = JSON.stringify({ images: long }, null, 2) + "\n";
+// REAL_PHOTOS=1 seeds the preview with Jacob's actual photos, read from the working
+// tree (read-only) so design reviews show the real thing. Nothing is ever written back.
+if (process.env.REAL_PHOTOS) {
+  const { readdirSync, readFileSync, existsSync } = await import("node:fs");
+  for (const slug of GALLERY_SLUGS) {
+    const dir = `public/galleries/${slug}`;
+    if (existsSync(dir)) for (const name of readdirSync(dir)) files[`${dir}/${name}`] = readFileSync(`${dir}/${name}`);
+    const json = `src/data/galleries/${slug}.json`;
+    if (existsSync(json)) files[json] = readFileSync(json, "utf8");
+  }
+  files["src/data/stats.json"] = readFileSync("src/data/stats.json", "utf8");
+}
 const initial = fake.seed("main", files);
 fake.refs.set("staging", initial);
 

@@ -100,7 +100,7 @@ await step("sign in: wrong password is explained, right password opens the dashb
   assert.equal(await text("#factPhotos"), "71");
   assert.equal(await text("#factGalleries"), "3 of 11");
   assert.match(await text("#statusText"), /All changes live/);
-  assert.match(await text("#msText"), /6,473 to 75,000/);
+  assert.match(await text("#msText"), /6,473 more until 75,000/);
   await page.waitForTimeout(500);
   await shot("01-home");
 });
@@ -341,8 +341,8 @@ await step("Moments Captured: add 1,250 (Enter key works) and set exact total (n
   await waitText("#mcValue", /^72,000$/);
   await waitIdle();
   momentsNow = 72000;
-  assert.match(await text("#mcLive"), /On your site now: 68,527/);
-  assert.match(await text("#msText"), /3,000 to 75,000/);
+  assert.match(await text("#mcLive"), /jcwrks\.com shows 68,527/);
+  assert.match(await text("#msText"), /3,000 more until 75,000/);
 });
 
 await step("review shows a clear summary", async () => {
@@ -549,7 +549,7 @@ await step("milestone: crossing 75,000 celebrates once, only after it's live", a
   await page.waitForSelector("#homeView:not([hidden])");
   await page.waitForTimeout(500);
   assert.ok(await page.isHidden("#celebrate"), "not repeated on the next visit");
-  assert.match(await text("#msText"), /24,981 to 100,000/);
+  assert.match(await text("#msText"), /24,981 more until 100,000/);
 });
 
 await step("keyboard: focus a photo, Enter opens options, Escape closes", async () => {

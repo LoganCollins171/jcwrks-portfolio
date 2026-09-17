@@ -162,6 +162,7 @@
   function showOnly(id) {
     for (const v of ["loginView", "loadingView", "homeView", "galleryView"]) $(v).hidden = v !== id;
     $("statusPill").hidden = !(id === "homeView" || id === "galleryView");
+    S.reveal?.();
   }
 
   function showLogin(message) {
@@ -407,7 +408,9 @@
     if (!st) return;
     const { live, draft } = st.stats;
     $("mcValue").textContent = fmt(draft);
-    $("mcLive").textContent = draft !== live ? `On your site now: ${fmt(live)}. Updates when you publish.` : "Live on your site.";
+    $("mcLive").textContent = draft !== live
+      ? `jcwrks.com shows ${fmt(live)} until you publish.`
+      : "This is the number showing on jcwrks.com.";
     renderMilestone(draft, st.milestones || []);
 
     $("factPhotos").textContent = fmt(st.totalPhotos);
@@ -428,12 +431,11 @@
     for (const g of sorted) {
       const li = document.createElement("li");
       const a = document.createElement("a");
-      a.className = "gallery-row";
+      a.className = "gallery-row" + (g.count ? "" : " is-empty");
       a.href = `#/gallery/${g.slug}`;
-      let cover;
       if (g.cover) {
         const coverKey = `${g.slug}|${g.cover.sha || g.cover.url}`;
-        cover = S.coverCache.get(coverKey);
+        let cover = S.coverCache.get(coverKey);
         if (!cover) {
           const img = document.createElement("img");
           img.className = "cover";
@@ -445,34 +447,31 @@
           S.coverCache.set(coverKey, img);
           cover = img;
         }
-      } else {
-        cover = document.createElement("span");
-        cover.className = "cover cover-empty";
-        cover.textContent = "+";
-        cover.setAttribute("aria-hidden", "true");
+        a.appendChild(cover);
       }
-      const name = document.createElement("span");
-      name.className = "name";
-      name.textContent = g.title;
+      const scrim = document.createElement("span");
+      scrim.className = "scrim";
+      scrim.setAttribute("aria-hidden", "true");
+      const meta = document.createElement("span");
+      meta.className = "meta";
       const group = document.createElement("span");
       group.className = "group";
       group.textContent = SPORTS.includes(g.slug) ? "Sports" : "Gallery";
-      name.appendChild(group);
+      const name = document.createElement("span");
+      name.className = "name";
+      name.textContent = g.title;
+      const count = document.createElement("span");
+      count.className = "count";
+      count.textContent = g.count ? plural(g.count, "photo") : "Empty";
+      meta.append(group, name, count);
       if (g.changed) {
         const chip = document.createElement("span");
         chip.className = "chip";
         chip.textContent = "Not published yet";
-        name.appendChild(chip);
+        meta.appendChild(chip);
       }
-      const count = document.createElement("span");
-      count.className = "count" + (g.count ? "" : " zero");
-      count.textContent = fmt(g.count);
-      const chev = document.createElement("span");
-      chev.className = "chev";
-      chev.setAttribute("aria-hidden", "true");
-      chev.textContent = "›";
       a.setAttribute("aria-label", `${g.title}, ${plural(g.count, "photo")}${g.changed ? ", has unpublished changes" : ""}`);
-      a.append(cover, name, count, chev);
+      a.append(scrim, meta);
       li.appendChild(a);
       rows.push(li);
     }
@@ -485,10 +484,10 @@
     const box = $("milestone");
     if (!next) { box.hidden = true; return; }
     const prev = [...milestones].reverse().find((m) => m <= value) || 0;
-    const pct = Math.max(2, Math.min(100, ((value - prev) / (next - prev)) * 100));
+    const pct = Math.max(0, Math.min(100, ((value - prev) / (next - prev)) * 100));
     box.hidden = false;
     $("msFill").style.width = `${pct}%`;
-    $("msText").textContent = `${fmt(next - value)} to ${fmt(next)}`;
+    $("msText").textContent = `${fmt(next - value)} more until ${fmt(next)}`;
   }
 
   function renderReview() {
@@ -576,6 +575,7 @@
     if (!S.gallery || !S.state) return;
     const g = S.state.galleries.find((x) => x.slug === S.gallery);
     $("gTitle").textContent = g ? g.title : S.gallery;
+    $("gGroup").textContent = SPORTS.includes(S.gallery) ? "Sports" : "Gallery";
     const newCount = S.photos.filter((p) => p.isNew).length;
     const n = S.photos.length || g?.count || 0;
     $("gCount").textContent = `${plural(n, "photo")}${newCount ? ` · ${fmt(newCount)} not live yet` : ""}`;
@@ -1224,15 +1224,49 @@
     const done = store.get(CELEBRATED_KEY) || [];
     if (done.includes(m)) return;
     store.set(CELEBRATED_KEY, [...done, m]);
-    $("celebrateTitle").textContent = `${fmt(m)} moments captured.`;
-    const next = (S.state?.milestones || []).find((x) => x > m);
-    $("celebrateText").textContent = `Now live on jcwrks.com.${next ? ` Next stop: ${fmt(next)}.` : ""}`;
+
+    // Same editorial reveal the portfolio uses for its own headlines: the number
+    // and its label rise out of a masked line, and the number counts up to the
+    // milestone. Title text stays one sentence for screen readers.
+    const title = $("celebrateTitle");
+    const numLine = document.createElement("span");
+    numLine.className = "ms-line";
+    const num = document.createElement("span");
+    num.className = "ms-num";
+    num.textContent = fmt(m);
+    numLine.appendChild(num);
+    const labLine = document.createElement("span");
+    labLine.className = "ms-line";
+    const lab = document.createElement("span");
+    lab.className = "ms-lab";
+    lab.textContent = "moments captured.";
+    labLine.appendChild(lab);
+    title.replaceChildren(numLine, document.createTextNode(" "), labLine);
+    $("celebrateText").textContent = "Now live on jcwrks.com.";
+
     const card = $("celebrate");
     card.hidden = false;
     card.classList.remove("play");
     void card.offsetWidth;
     card.classList.add("play");
+    countUp(num, m);
     announce(`Milestone: ${fmt(m)} moments captured.`);
+  }
+
+  /** Count a number up into place (the portfolio's footer counter, same feel). */
+  function countUp(el, to) {
+    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) { el.textContent = fmt(to); return; }
+    const from = Math.max(0, to - Math.max(250, Math.round(to * 0.01)));
+    const start = performance.now();
+    const dur = 1500;
+    const tick = (now) => {
+      const p = Math.min(1, (now - start) / dur);
+      const eased = 1 - Math.pow(1 - p, 3);
+      el.textContent = fmt(Math.round(from + (to - from) * eased));
+      if (p < 1) requestAnimationFrame(tick);
+      else el.textContent = fmt(to);
+    };
+    requestAnimationFrame(tick);
   }
 
   function checkMilestoneOnLoad() {
@@ -1666,6 +1700,26 @@
     window.addEventListener("resize", layoutDock);
   }
 
+  /** The portfolio's nav behaviour: transparent at the top, frosted once you scroll. */
+  function wireChrome() {
+    const nav = document.querySelector("[data-nav]");
+    const onScroll = () => nav.classList.toggle("scrolled", window.scrollY > 24);
+    onScroll();
+    window.addEventListener("scroll", onScroll, { passive: true });
+
+    // Sections rise in on first paint, like the portfolio's hero. They are revealed
+    // immediately (with a small stagger), never parked invisible waiting to be
+    // scrolled into view: everything below the fold must already be there.
+    const reveal = () => {
+      const els = document.querySelectorAll("[data-reveal]:not(.is-in)");
+      if (!els.length) return;
+      requestAnimationFrame(() => els.forEach((el) => el.classList.add("is-in")));
+    };
+    reveal();
+    S.reveal = reveal;
+  }
+
+  wireChrome();
   wire();
   S.token = loadSession();
   if (S.token) enterApp(); else showLogin();
