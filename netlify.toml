@@ -9,6 +9,30 @@
   directory = "netlify/functions"
   node_bundler = "esbuild"
 
+# The old publish page is gone; everything happens in /admin now.
+[[redirects]]
+  from = "/publish"
+  to = "/admin/"
+  status = 301
+
+[[redirects]]
+  from = "/publish/"
+  to = "/admin/"
+  status = 301
+
+[[headers]]
+  for = "/admin/*"
+  [headers.values]
+    X-Frame-Options = "DENY"
+    X-Content-Type-Options = "nosniff"
+    Referrer-Policy = "same-origin"
+    Cache-Control = "no-cache"
+
+[[headers]]
+  for = "/build.json"
+  [headers.values]
+    Cache-Control = "no-cache"
+
 # Pretty 404s
 [[redirects]]
   from = "/*"

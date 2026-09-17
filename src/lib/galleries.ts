@@ -1,15 +1,15 @@
-// Loads gallery photos + cover from src/data/galleries/<slug>.json (managed by the CMS).
-// Each JSON looks like: { "cover": "/galleries/x/cover.jpg", "images": [ { "src": "...", "alt": "" } ] }
+// Loads gallery photos + cover for the site at build time.
 //
-// IMPORTANT: the JSON is not the only source of truth. Uploading a photo in the CMS
-// commits the FILE to public/galleries/<slug>/ straight away, but the photo only lands
-// in this JSON if you also add it to the "Photos" list and hit Save. Jacob kept doing
-// the first half only, so photos sat in the repo but never showed on the site.
-// So: we read the folder too, and append any image that isn't already listed.
-// Upload alone is now enough. The JSON still wins for ORDER and CAPTIONS.
+// The rules live in ./gallery-model.mjs, shared with the /admin backend, so
+// the order Jacob sets in /admin is exactly what renders here:
+//   - src/data/galleries/<slug>.json decides ORDER and captions
+//   - a listed photo whose file is gone is skipped (no broken images)
+//   - a file in public/galleries/<slug>/ that isn't listed is appended
+//     (only happens for files added outside /admin)
 
 import { readdirSync, existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
+import { mergeGallery } from "./gallery-model.mjs";
 
 export interface GalleryImage {
   src: string;
@@ -28,27 +28,12 @@ const CANDIDATE_ROOTS = [
   fileURLToPath(new URL("../../public/galleries", import.meta.url)),
 ];
 const GALLERIES_DIR = CANDIDATE_ROOTS.find((d) => existsSync(d)) ?? CANDIDATE_ROOTS[0];
-const IMAGE_EXT = /\.(jpe?g|png|webp|avif)$/i;
 
-// Compare paths loosely — the CMS sometimes URL-encodes, and Windows/camera files
-// vary in case (.jpg vs .JPG), so a strict === would double up photos.
-const key = (src: string) => {
-  try {
-    return decodeURIComponent(src).toLowerCase();
-  } catch {
-    return src.toLowerCase();
-  }
-};
-
-/** Every image file actually sitting in public/galleries/<slug>/, natural-sorted. */
 function filesOnDisk(slug: string): string[] {
   const dir = `${GALLERIES_DIR}/${slug}`;
   if (!existsSync(dir)) return [];
   try {
-    return readdirSync(dir)
-      .filter((name) => IMAGE_EXT.test(name))
-      .sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" }))
-      .map((name) => `/galleries/${slug}/${name}`);
+    return readdirSync(dir).map((name) => `/galleries/${slug}/${name}`);
   } catch {
     return [];
   }
@@ -56,41 +41,34 @@ function filesOnDisk(slug: string): string[] {
 
 const imagesBySlug: Record<string, GalleryImage[]> = {};
 const coverBySlug: Record<string, string> = {};
-const autoIncluded: string[] = [];
+const notes: string[] = [];
 
 for (const path in files) {
   const slug = path.split("/").pop()!.replace(".json", "");
   const data = files[path] as { cover?: string; images?: GalleryImage[] };
 
-  // 1. Curated entries from the CMS — these keep their order and captions.
-  const listed = (data.images ?? []).filter((i) => i && i.src);
-  const seen = new Set(listed.map((i) => key(i.src)));
-
-  // 2. Anything uploaded to the folder but never added to the list — appended.
-  const extras = filesOnDisk(slug)
-    .filter((src) => !seen.has(key(src)))
-    .map((src) => ({ src, alt: "" }));
-
-  imagesBySlug[slug] = [...listed, ...extras];
+  const { images, missing, extras } = mergeGallery(data.images ?? [], filesOnDisk(slug));
+  imagesBySlug[slug] = images;
   if (data.cover) coverBySlug[slug] = data.cover;
-  if (extras.length) autoIncluded.push(`${slug} +${extras.length}`);
+  if (extras.length) notes.push(`${slug} +${extras.length} unlisted`);
+  if (missing.length) notes.push(`${slug} skipped ${missing.length} missing`);
 }
 
-// Shows up in the Netlify build log — handy proof that uploads were picked up.
-if (autoIncluded.length) {
-  console.log(`[galleries] auto-included uploaded photos: ${autoIncluded.join(", ")}`);
+// Shows up in the Netlify build log.
+if (notes.length) {
+  console.log(`[galleries] ${notes.join(", ")}`);
 }
 
 export function getGalleryImages(slug: string): GalleryImage[] {
   return imagesBySlug[slug] ?? [];
 }
 
-// CMS-set cover wins; fall back to the hardcoded `fallback` (from categories.ts)
+// JSON-set cover wins; fall back to the hardcoded `fallback` (from categories.ts)
 export function getCover(slug: string, fallback?: string): string | undefined {
   return coverBySlug[slug] || fallback;
 }
 
-// Total real photos across every gallery — for the live "moments captured" counter.
+// Total real photos across every gallery.
 export function getTotalPhotos(): number {
   return Object.values(imagesBySlug).reduce((sum, imgs) => sum + imgs.length, 0);
 }
