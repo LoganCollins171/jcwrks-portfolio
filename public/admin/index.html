@@ -11,25 +11,28 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Allura&family=Inter+Tight:wght@500;600;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/admin/admin.css?v=2" />
+  <link rel="stylesheet" href="/admin/admin.css?v=3" />
 </head>
 <body>
-  <div class="wrap">
-    <header class="top">
-      <div>
-        <span class="brand">jc<em>_</em>wrks</span>
-        <span class="tag">Portfolio Manager</span>
-      </div>
-      <button class="link" id="signOut" type="button" hidden>Sign out</button>
-    </header>
+  <header class="topbar">
+    <div class="topbar-inner">
+      <a class="brand" href="#/" aria-label="jc_wrks Portfolio Manager, home"><span class="logo">jc<em>_</em>wrks</span><span class="tag">Portfolio Manager</span></a>
+      <button class="pill" id="statusPill" type="button" hidden>
+        <span class="dot" id="statusDot" aria-hidden="true"></span>
+        <span id="statusText">All changes live</span>
+      </button>
+    </div>
+  </header>
+  <div id="announcer" class="sr-only" aria-live="polite" aria-atomic="true"></div>
 
+  <main class="wrap" id="main">
     <!-- ============ SIGN IN ============ -->
-    <section id="loginView" class="card login" hidden>
-      <h1>Sign in</h1>
+    <section id="loginView" class="card login" hidden aria-labelledby="loginTitle">
+      <h1 id="loginTitle">Sign in</h1>
       <p class="muted">Manage the photos on jcwrks.com.</p>
       <form id="loginForm" novalidate>
         <label for="pw">Password</label>
-        <input id="pw" type="password" autocomplete="current-password" required />
+        <input id="pw" type="password" autocomplete="current-password" autocapitalize="off" required />
         <button class="btn primary block" id="loginBtn" type="submit">Sign in</button>
         <p class="msg err" id="loginMsg" role="alert"></p>
       </form>
@@ -41,36 +44,119 @@
       <p class="muted">Loading your portfolio…</p>
     </section>
 
-    <!-- ============ DASHBOARD ============ -->
-    <main id="appView" hidden>
-      <p class="banner" id="banner" role="status" hidden></p>
+    <div class="alert" id="alert" role="alert" hidden>
+      <p id="alertText"></p>
+      <div class="alert-actions">
+        <button class="btn small" id="alertAction" type="button" hidden></button>
+        <button class="btn ghost small" id="alertClose" type="button">Dismiss</button>
+      </div>
+    </div>
 
-      <!-- Photos -->
-      <section class="card" aria-labelledby="photosTitle">
-        <div class="card-head">
-          <h2 id="photosTitle">Photos</h2>
+    <!-- ============ HOME ============ -->
+    <div id="homeView" hidden>
+      <section class="moments card" aria-labelledby="mcLabel">
+        <p class="eyebrow" id="mcLabel">Moments Captured</p>
+        <p class="mc-number" id="mcValue">…</p>
+        <p class="muted small" id="mcLive"></p>
+        <div class="milestone" id="milestone" hidden>
+          <div class="ms-track" aria-hidden="true"><div class="ms-fill" id="msFill"></div></div>
+          <p class="small muted" id="msText"></p>
         </div>
-        <label for="gallery" class="sr-label">Gallery</label>
-        <select id="gallery"></select>
+        <div class="row-buttons">
+          <button class="btn primary" id="mcAddBtn" type="button">+ Add photos taken</button>
+          <button class="btn ghost" id="mcSetBtn" type="button">Set exact total</button>
+        </div>
+      </section>
 
+      <section class="celebrate card" id="celebrate" hidden>
+        <svg class="aperture" viewBox="0 0 100 100" aria-hidden="true">
+          <circle cx="50" cy="50" r="46" fill="none" stroke="currentColor" stroke-width="2.5" />
+          <g class="blades" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linejoin="round">
+            <path d="M50 4 L73 50" /><path d="M89.8 27 L50 73" /><path d="M89.8 73 L27 50" />
+            <path d="M50 96 L27 50" /><path d="M10.2 73 L50 27" /><path d="M10.2 27 L73 50" />
+          </g>
+        </svg>
+        <div class="celebrate-copy">
+          <p class="celebrate-title" id="celebrateTitle"></p>
+          <p class="muted small" id="celebrateText"></p>
+        </div>
+        <button class="btn ghost small" id="celebrateClose" type="button">Close</button>
+      </section>
+
+      <section class="facts" aria-label="Portfolio at a glance">
+        <div class="fact"><span class="fact-num" id="factPhotos">…</span><span class="fact-label">portfolio photos</span></div>
+        <div class="fact"><span class="fact-num" id="factGalleries">…</span><span class="fact-label">galleries with photos</span></div>
+        <div class="fact"><span class="fact-num fact-date" id="factPublished">…</span><span class="fact-label" id="factPublishedLabel">last published</span></div>
+      </section>
+
+      <section class="card" aria-labelledby="galleriesTitle">
+        <h2 id="galleriesTitle">Galleries</h2>
+        <ul class="gallery-list" id="galleryList"></ul>
+      </section>
+
+      <section class="card publish-card" id="publishCard" aria-labelledby="publishTitle" tabindex="-1">
+        <h2 id="publishTitle">Publish</h2>
+        <div id="changesNone">
+          <p class="uptodate"><span class="dot ok" aria-hidden="true"></span> Everything is live. Nothing waiting to publish.</p>
+        </div>
+        <div id="changesSome" hidden>
+          <p class="eyebrow">Not on your site yet</p>
+          <div class="review" id="reviewList"></div>
+          <button class="btn primary block big" id="publishBtn" type="button">Publish changes</button>
+          <button class="link danger" id="discardBtn" type="button">Throw away all unpublished changes</button>
+        </div>
+        <div id="publishStatus" class="publish-status" hidden>
+          <div class="status-line"><span class="spinner small" id="pubSpinner" aria-hidden="true"></span><strong id="pubTitle"></strong></div>
+          <p class="small" id="pubDetail"></p>
+          <ol class="steps" id="pubSteps" aria-label="Publish progress">
+            <li data-step="prepare">Preparing update</li>
+            <li data-step="publish">Updating website</li>
+            <li data-step="verify">Verifying live site</li>
+          </ol>
+          <div class="row-buttons">
+            <button class="btn" id="pubCheck" type="button" hidden>Check again</button>
+            <button class="btn primary" id="pubRetry" type="button" hidden>Try again</button>
+            <button class="btn ghost" id="pubDismiss" type="button" hidden>OK</button>
+          </div>
+        </div>
+      </section>
+
+      <p class="foot">
+        <a href="/" target="_blank" rel="noopener">View your site ↗</a>
+        <span aria-hidden="true">·</span>
+        <button class="link" id="signOut" type="button">Sign out</button>
+      </p>
+    </div>
+
+    <!-- ============ GALLERY ============ -->
+    <div id="galleryView" hidden>
+      <div class="gallery-head">
+        <a class="back" href="#/" id="backLink">‹ Galleries</a>
+        <h1 id="gTitle" tabindex="-1">Gallery</h1>
+        <p class="muted small" id="gCount"></p>
+      </div>
+
+      <section class="card dropzone" id="photosCard" aria-labelledby="gTitle">
         <div class="toolbar">
           <button class="btn primary" id="addBtn" type="button">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
             Add photos
           </button>
-          <span class="muted small" id="photoCount"></span>
+          <button class="btn ghost" id="selectBtn" type="button" aria-pressed="false">Select</button>
+          <span class="muted small drop-hint">or drop photos here</span>
         </div>
         <input id="fileInput" type="file" accept="image/*" multiple hidden />
 
         <div id="uploadPanel" class="upload-panel" hidden>
           <div class="upload-head">
             <strong id="uploadTitle">Adding photos</strong>
-            <span class="muted small" id="uploadProgress"></span>
+            <span class="small muted" id="uploadCounts"></span>
           </div>
+          <div class="progress" aria-hidden="true"><div class="progress-fill" id="uploadBar"></div></div>
+          <p class="small" id="uploadNote" role="status">Keep this page open until photos are saved.</p>
           <ul id="uploadList" class="upload-list"></ul>
           <div class="upload-actions" id="uploadActions" hidden>
             <button class="btn" id="retryFailed" type="button" hidden>Try failed photos again</button>
-            <button class="btn" id="saveAgain" type="button" hidden>Save photos again</button>
             <button class="btn ghost" id="closeUpload" type="button">Done</button>
           </div>
           <div id="momentsOffer" class="offer" hidden>
@@ -78,116 +164,103 @@
               <input type="checkbox" id="offerCheck" />
               <span>Also add these <b id="offerCount">0</b> photos to Moments Captured</span>
             </label>
-            <p class="muted small">Only tick this if these photos aren't already counted in your total.</p>
+            <p class="muted small">Only tick this if they aren't already counted in your total.</p>
             <button class="btn" id="offerBtn" type="button" disabled>Update Moments Captured</button>
           </div>
         </div>
 
-        <p class="hint" id="reorderHint">Press and hold a photo, then drag to change the order. Tap a photo for more options.</p>
-
-        <div id="grid" class="grid" aria-live="polite"></div>
-        <p class="empty muted" id="emptyGallery" hidden>No photos in this gallery yet. Tap “Add photos” to start.</p>
-
-        <div class="orderbar" id="orderBar" hidden>
-          <span>You changed the order.</span>
-          <span class="orderbar-actions">
-            <button class="btn ghost small" id="undoOrder" type="button">Undo</button>
-            <button class="btn primary small" id="saveOrder" type="button">Save order</button>
-          </span>
-        </div>
-      </section>
-
-      <!-- Moments Captured -->
-      <section class="card" aria-labelledby="momentsTitle">
-        <div class="card-head">
-          <h2 id="momentsTitle">Moments Captured</h2>
-        </div>
-        <p class="muted small">Your lifetime total of photos taken. It shows on your site. Removing portfolio photos never lowers it.</p>
-        <div class="moments">
-          <span class="big-number" id="momentsValue">…</span>
-          <span class="muted small" id="momentsLive"></span>
-        </div>
-        <div class="row-buttons">
-          <button class="btn primary" id="momentsAddBtn" type="button">+ Add photos taken</button>
-          <button class="btn ghost" id="momentsSetBtn" type="button">Set exact total</button>
-        </div>
-      </section>
-
-      <!-- Publish -->
-      <section class="card publish-card" aria-labelledby="publishTitle" id="publishCard">
-        <div class="card-head">
-          <h2 id="publishTitle">Publish</h2>
-        </div>
-        <div id="changesNone">
-          <p class="uptodate"><span class="dot ok"></span> Everything is up to date.</p>
-        </div>
-        <div id="changesSome" hidden>
-          <p><strong>Changes not on your site yet:</strong></p>
-          <ul class="changes" id="changesList"></ul>
-          <div id="removedList" class="removed"></div>
-          <button class="btn primary block big" id="publishBtn" type="button">Publish changes</button>
-          <button class="link danger" id="discardBtn" type="button">Throw away all unpublished changes</button>
-        </div>
-        <div id="publishStatus" class="publish-status" hidden>
-          <div class="status-line"><span class="spinner small" id="pubSpinner" aria-hidden="true"></span><strong id="pubTitle"></strong></div>
-          <p class="muted small" id="pubDetail"></p>
-          <div class="row-buttons">
-            <button class="btn" id="pubCheck" type="button" hidden>Check again</button>
-            <button class="btn" id="pubRetry" type="button" hidden>Try publishing again</button>
-            <button class="btn ghost" id="pubDismiss" type="button" hidden>OK</button>
+        <div id="removedPanel" class="removed-panel" hidden>
+          <div class="removed-head">
+            <strong>Removed, not published yet</strong>
+            <button class="btn ghost small" id="restoreAll" type="button">Put all back</button>
           </div>
+          <p class="small muted">These are still on your live site until you publish.</p>
+          <div class="removed-strip" id="removedStrip"></div>
         </div>
-      </section>
 
-      <p class="foot"><a href="/" target="_blank" rel="noopener">View your site ↗</a></p>
-    </main>
+        <p class="hint" id="reorderHint">Press and hold a photo, then drag to change the order. Tap a photo for more options.</p>
+        <div id="grid" class="grid" role="group" aria-label="Photos in order"></div>
+        <p class="empty muted" id="emptyGallery" hidden>No photos here yet. Tap “Add photos” to start this gallery.</p>
+      </section>
+    </div>
+  </main>
+
+  <!-- ============ STICKY BARS ============ -->
+  <div class="dock" id="dock">
+    <div class="toast" id="toast" hidden>
+      <span id="toastText"></span>
+      <button class="btn small light" id="toastAction" type="button" hidden>Undo</button>
+    </div>
+    <div class="bar" id="orderBar" hidden>
+      <span>New order not saved</span>
+      <span class="bar-actions">
+        <button class="btn ghost small light-outline" id="undoOrder" type="button">Undo</button>
+        <button class="btn primary small" id="saveOrder" type="button">Save order</button>
+      </span>
+    </div>
+    <div class="bar" id="selectBar" hidden>
+      <span id="selectCount">0 selected</span>
+      <span class="bar-actions">
+        <button class="btn ghost small light-outline" id="selectAll" type="button">All</button>
+        <button class="btn ghost small light-outline" id="selectClear" type="button">Clear</button>
+        <button class="btn danger small solid" id="selectRemove" type="button" disabled>Remove</button>
+      </span>
+    </div>
   </div>
 
   <!-- ============ DIALOGS ============ -->
-  <dialog id="photoSheet" class="sheet">
+  <dialog id="photoSheet" class="sheet" aria-labelledby="sheetTitle">
     <img id="sheetImg" alt="" />
-    <p class="sheet-title" id="sheetTitle"></p>
+    <p class="sheet-title" id="sheetTitle" tabindex="-1" autofocus></p>
     <div class="sheet-grid">
       <button class="btn" data-move="first" type="button">Move to start</button>
       <button class="btn" data-move="up" type="button">Move earlier</button>
       <button class="btn" data-move="down" type="button">Move later</button>
       <button class="btn" data-move="last" type="button">Move to end</button>
     </div>
+    <form class="moveto" id="moveToForm" novalidate>
+      <label for="moveToInput">Move to position</label>
+      <div class="moveto-row">
+        <input id="moveToInput" type="text" inputmode="numeric" autocomplete="off" enterkeyhint="go" />
+        <button class="btn" type="submit">Move</button>
+      </div>
+    </form>
     <button class="btn danger block" id="sheetRemove" type="button">Remove from gallery…</button>
     <button class="btn ghost block" id="sheetClose" type="button">Close</button>
   </dialog>
 
-  <dialog id="confirmDialog" class="modal">
-    <img id="confirmImg" alt="" hidden />
-    <h3 id="confirmTitle"></h3>
-    <p class="muted" id="confirmText"></p>
+  <dialog id="confirmDialog" class="modal" aria-labelledby="confirmTitle">
+    <h3 id="confirmTitle" tabindex="-1"></h3>
+    <div id="confirmBody"></div>
     <label class="check" id="confirmCheckWrap" hidden>
       <input type="checkbox" id="confirmCheck" />
       <span id="confirmCheckText"></span>
     </label>
     <div class="modal-actions">
       <button class="btn ghost" id="confirmCancel" type="button">Cancel</button>
+      <button class="btn" id="confirmAlt" type="button" hidden></button>
       <button class="btn primary" id="confirmOk" type="button">OK</button>
     </div>
   </dialog>
 
-  <dialog id="numberDialog" class="modal">
-    <h3 id="numberTitle"></h3>
-    <p class="muted small" id="numberHelp"></p>
-    <input id="numberInput" type="text" inputmode="numeric" autocomplete="off" />
-    <p class="preview" id="numberPreview"></p>
-    <label class="check" id="numberCheckWrap" hidden>
-      <input type="checkbox" id="numberCheck" />
-      <span id="numberCheckText"></span>
-    </label>
-    <p class="msg err" id="numberMsg" role="alert"></p>
-    <div class="modal-actions">
-      <button class="btn ghost" id="numberCancel" type="button">Cancel</button>
-      <button class="btn primary" id="numberOk" type="button" disabled>Save</button>
-    </div>
+  <dialog id="numberDialog" class="modal" aria-labelledby="numberTitle">
+    <form id="numberForm" novalidate>
+      <h3 id="numberTitle"></h3>
+      <label class="small muted" id="numberHelp" for="numberInput"></label>
+      <input id="numberInput" type="text" inputmode="numeric" autocomplete="off" enterkeyhint="done" />
+      <p class="preview" id="numberPreview" aria-live="polite"></p>
+      <label class="check" id="numberCheckWrap" hidden>
+        <input type="checkbox" id="numberCheck" />
+        <span id="numberCheckText"></span>
+      </label>
+      <div class="modal-actions">
+        <button class="btn ghost" id="numberCancel" type="button">Cancel</button>
+        <button class="btn primary" id="numberOk" type="submit" disabled>Save</button>
+      </div>
+    </form>
   </dialog>
 
   <script src="/admin/vendor/Sortable.min.js?v=1.15.7"></script>
-  <script src="/admin/admin.js?v=2"></script>
+  <script src="/admin/admin.js?v=3"></script>
 </body>
 </html>

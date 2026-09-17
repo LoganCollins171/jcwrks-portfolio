@@ -6,7 +6,7 @@ import type { GalleryImage } from "../lib/galleries";
 
 interface Props {
   label: string; // e.g. "Baseball"
-  images?: GalleryImage[]; // real photos from the CMS
+  images?: GalleryImage[]; // real photos, in the order set in /admin
   count?: number; // placeholder count when there are no photos yet
 }
 const { label, images = [], count = 6 } = Astro.props;
@@ -16,7 +16,7 @@ const hasPhotos = images.length > 0;
 //
 // Why: the gallery used to be CSS-columns masonry, which fills DOWN each
 // column and lets the browser rebalance by height — so the order Jacob set in
-// the CMS came out column-first and photos seemed to land "randomly". Knowing
+// the gallery list came out column-first and photos seemed to land "randomly". Knowing
 // each photo's aspect ratio lets a small script place them LEFT-TO-RIGHT into
 // balanced columns instead, deterministically. The width/height attributes
 // also stop the page jumping while images load.
@@ -104,7 +104,7 @@ const placeholders = Array.from({ length: count }, (_, i) => i);
   // ---- masonry that respects Jacob's order ----
   //
   // CSS `columns` fills DOWN each column and rebalances by height, so the
-  // order set in the CMS appeared column-first and photos seemed to jump
+  // order set in /admin appeared column-first and photos seemed to jump
   // around. This places each photo, in order, into whichever column is
   // currently shortest (using the aspect ratios measured at build time), so
   // the sequence reads left-to-right and the layout is deterministic —

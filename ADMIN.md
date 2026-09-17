@@ -3,6 +3,23 @@
 Jacob manages his portfolio at **jcwrks.com/admin**: add, remove and reorder
 photos, update Moments Captured, then **Publish changes**. No GitHub, no JSON.
 
+## What Jacob sees
+- **Dashboard** (`/admin`): Moments Captured with progress to the next milestone
+  (75k, 100k, 150k, 250k, 500k, 750k, 1M), portfolio photo count, galleries with photos,
+  last publish (derived from git history), every gallery with its count, and the Publish card.
+- **Gallery** (`/admin#/gallery/<slug>`): thumbnails in order with position numbers,
+  Add photos (or drop files on desktop), drag or tap-menu reordering (Move earlier/later,
+  start/end, or to a position number), Select mode for removing several photos at once,
+  Undo after removing, and a "Removed, not published yet" strip to put photos back.
+- **Status pill** (top right) always says one of: Uploading / Saving / Order not saved /
+  Not published yet / Updating website / Verifying live site / Published ✓ /
+  Website not updated yet / All changes live. Tapping it jumps to Publish.
+- **Publish**: a review ("Ready to publish": per gallery +/− photos, order changed, Moments
+  Captured before → after), then three steps: Preparing update, Updating website (waits for
+  `/build.json` to show the new commit), Verifying live site (fetches each changed gallery page and
+  the homepage and checks the photo counts and the Moments Captured number). Only then "Published ✓".
+- A milestone crossed by a publish gets a one-time aperture animation after it's verified live.
+
 ## Architecture (one writer, one pipeline)
 
 ```
@@ -12,6 +29,7 @@ resize to <=2000px, JPEG/WebP  --->  check REAL bytes (format, size, px)  --> bl
                                      signed receipt
 "Save to gallery" / remove /   --->  ONE atomic commit on `staging`       --> staging (Jacob's draft)
 reorder / Moments Captured           (compare-and-swap, retried on races)
+                                     answers with fresh state (1 round trip)
 "Publish changes"              --->  ONE commit on `main` applying every  --> main --> Netlify build
                                      content difference (+ levels staging)
 poll until live                --->  compares /build.json commit          <-- live site
@@ -29,6 +47,11 @@ poll until live                --->  compares /build.json commit          <-- li
 - **Order** lives in the gallery JSON. `src/lib/gallery-model.mjs` is the single rule set used by both
   the site build (`src/lib/galleries.ts`) and the admin, so what Jacob sees is what renders.
   A listed photo whose file is missing is skipped (never a broken image).
+- **Uploads** prepare one photo at a time in the browser (big camera files use a lot of memory),
+  send two at a time, and save to the gallery every 8 photos, so a closed tab loses little.
+  The screen is kept awake during uploads where supported. Rate limits pause and continue by themselves.
+- **Undo** of a removal works for any photo, including ones that were never published (restored by
+  content hash after the bytes are re-validated).
 - **File names** are `<camera-name>-<8 chars of content hash>.<jpg|webp>`, so two different photos
   called `IMG_0001.JPG` can never overwrite each other, and the exact same photo twice is skipped.
 
@@ -85,9 +108,13 @@ Netlify: replace `ADMIN_PASSWORD`, trigger a deploy, tell Jacob the new one.
 ## Tests
 ```
 npm test                                   # engine, API, auth, races, model (fake in-memory GitHub)
+node tests/perf/api-calls.mjs              # GitHub API calls per action on a cold function
 node tests/browser/dev-server.mjs          # local /admin on a fake repo: http://localhost:4400/admin/
-PLAYWRIGHT=.../node_modules/playwright FIXTURES=... SHOTS=... \
-  node tests/browser/admin-e2e.mjs webkit-iphone     # also chromium-desktop, chromium-android
+PLAYWRIGHT=.../node_modules/playwright AXE=.../axe-core/axe.min.js FIXTURES=... SHOTS=... \
+  node tests/browser/admin-e2e.mjs webkit-iphone     # also chromium-desktop, chromium-android, webkit-tablet
 GH_TOKEN=... FIXTURES=... node tests/integration/real-github.mjs   # real GitHub, throwaway branches
 ```
+The browser test covers the whole owner journey plus deliberate failures (storage errors on upload,
+save and publish, rate limits, offline, a website build that never finishes, two tabs).
+The dev server accepts `POST /__test/fault` and `POST /__test/deploy-mode` to simulate those.
 Never run `npm run build` in the real checkout and commit the result: the build shrinks images in place.

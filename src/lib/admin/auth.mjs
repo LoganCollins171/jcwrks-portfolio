@@ -47,6 +47,12 @@ export function createAuth({ password, token, store, now = () => Date.now(), log
     }
   }
 
+  function issue() {
+    const expires = now() + SESSION_TTL_MS;
+    const payload = b64url(JSON.stringify({ v: 1, exp: expires }));
+    return { token: `${payload}.${sign(payload)}`, expires };
+  }
+
   return {
     /** @returns {{ ok: true, token, expires } | { ok: false, reason: "locked"|"wrong", retryAfterSec? }} */
     async login(attempt, ip = "unknown") {
@@ -57,9 +63,7 @@ export function createAuth({ password, token, store, now = () => Date.now(), log
       }
       if (typeof attempt === "string" && attempt.length <= 200 && safeEqual(attempt, password)) {
         if (fails) await writeFails(ip, null);
-        const expires = t + SESSION_TTL_MS;
-        const payload = b64url(JSON.stringify({ v: 1, exp: expires }));
-        return { ok: true, token: `${payload}.${sign(payload)}`, expires };
+        return { ok: true, ...issue() };
       }
       if (!fails || t - fails.first > FAIL_WINDOW_MS) fails = { count: 0, first: t };
       fails.count += 1;
@@ -69,17 +73,25 @@ export function createAuth({ password, token, store, now = () => Date.now(), log
       return { ok: false, reason: "wrong" };
     },
 
-    verifySession(sessionToken) {
-      if (typeof sessionToken !== "string" || sessionToken.length > 1000) return false;
+    /** A fresh session (used at login, and to quietly extend an active one). */
+    issueSession: () => issue(),
+
+    /** @returns {{ expires: number } | null} */
+    readSession(sessionToken) {
+      if (typeof sessionToken !== "string" || sessionToken.length > 1000) return null;
       const [payload, sig] = sessionToken.split(".");
-      if (!payload || !sig) return false;
-      if (!safeEqual(sig, sign(payload))) return false;
+      if (!payload || !sig) return null;
+      if (!safeEqual(sig, sign(payload))) return null;
       try {
         const data = JSON.parse(Buffer.from(payload, "base64url").toString("utf8"));
-        return data.v === 1 && typeof data.exp === "number" && data.exp > now();
+        return data.v === 1 && typeof data.exp === "number" && data.exp > now() ? { expires: data.exp } : null;
       } catch {
-        return false;
+        return null;
       }
+    },
+
+    verifySession(sessionToken) {
+      return !!this.readSession(sessionToken);
     },
 
     signReceipt({ sha, ext, stem, width, height }) {

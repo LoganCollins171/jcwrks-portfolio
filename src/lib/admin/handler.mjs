@@ -3,26 +3,30 @@
 //
 // POST /api/admin?op=<op>
 //   login            { password }                    -> { token, expires }
-//   state                                            -> galleries, Moments Captured, unpublished changes, live status
+//   state                                            -> dashboard: galleries, Moments Captured, unpublished changes, live status
 //   gallery          { gallery }                     -> photos in draft order
 //   upload           raw JPEG/WebP bytes, header x-file-name -> signed receipt
 //   add              { gallery, files: [receipt] }   -> added / skipped
-//   remove           { gallery, src }
-//   restore          { gallery, src }
+//   remove           { gallery, srcs: [src] }        -> removed (with sha + position for undo)
+//   restore          { gallery, items: [{ src, sha?, index? }] }
 //   reorder          { gallery, order: [src] }
 //   moments-add      { amount }
 //   moments-set      { value, expected }
-//   discard          {}
+//   discard          { gallery? }
 //   publish          { draftSha }
 //   publish-status   { productionSha }
 //   retry-publish    {}
 // Every op except login needs `authorization: Bearer <token>`.
+// Every write answers with `snapshot: { state, gallery? }`, the state right
+// after the change, so the page never needs a second round trip.
 
 import { ContentError } from "./content.mjs";
 import { ImageError, MAX_UPLOAD_BYTES, safeStem, validateImage } from "./images.mjs";
 import { GitHubError } from "./github.mjs";
 
 const RETRY_PUBLISH_MIN_AGE_MS = 4 * 60 * 1000;
+const RENEW_WHEN_LEFT_MS = 7 * 24 * 60 * 60 * 1000;
+const SHA = /^[0-9a-f]{40}$/;
 
 function json(status, body) {
   return new Response(JSON.stringify(body), {
@@ -43,7 +47,7 @@ export function createHandler({ auth, engine, gh, fetchLiveCommit, prodBranch = 
 
   // Newest commits the browser already knows about (see content.mjs freshest()).
   function hints(req) {
-    const pick = (h) => { const v = req.headers.get(h) || ""; return /^[0-9a-f]{40}$/.test(v) ? v : undefined; };
+    const pick = (h) => { const v = req.headers.get(h) || ""; return SHA.test(v) ? v : undefined; };
     return { draft: pick("x-known-draft"), prod: pick("x-known-prod") };
   }
 
@@ -60,15 +64,28 @@ export function createHandler({ auth, engine, gh, fetchLiveCommit, prodBranch = 
     }
   }
 
+  /** Strip the internal context and attach fresh state (and gallery) computed from it. */
+  async function withSnapshot(result, gallery) {
+    const { ctx, ...rest } = result;
+    if (!ctx) return ok(rest);
+    const snapshot = { state: await engine.stateFrom(ctx) };
+    if (gallery) snapshot.gallery = await engine.galleryFrom(ctx, gallery);
+    return ok({ ...rest, snapshot });
+  }
+
+  const gallerySlug = (v) => String(v || "");
+
   const ops = {
-    async state(req) {
+    async state(req, session) {
       const s = await engine.state(hints(req));
-      return ok({ ...s, deploy: await liveStatus(s.productionSha) });
+      const body = { ...s, deploy: await liveStatus(s.productionSha) };
+      if (session.expires - now() < RENEW_WHEN_LEFT_MS) body.renewedSession = auth.issueSession();
+      return ok(body);
     },
 
     async gallery(req) {
       const { gallery } = await readJsonBody(req);
-      return ok(await engine.gallery(String(gallery || ""), hints(req)));
+      return ok(await engine.gallery(gallerySlug(gallery), hints(req)));
     },
 
     async upload(req) {
@@ -92,18 +109,28 @@ export function createHandler({ auth, engine, gh, fetchLiveCommit, prodBranch = 
       for (const f of files) {
         if (!auth.verifyReceipt(f)) throw new ContentError("bad_receipt", "A photo's upload couldn't be verified. Please upload it again.", 400);
       }
-      const result = await engine.addPhotos(String(gallery || ""), files.map((f) => ({ sha: f.sha, ext: f.ext, stem: f.stem })), hints(req));
-      return ok(result);
+      const slug = gallerySlug(gallery);
+      const result = await engine.addPhotos(slug, files.map((f) => ({ sha: f.sha, ext: f.ext, stem: f.stem })), hints(req));
+      return withSnapshot(result, slug);
     },
 
     async remove(req) {
-      const { gallery, src } = await readJsonBody(req);
-      return ok(await engine.removePhoto(String(gallery || ""), String(src || ""), hints(req)));
+      const { gallery, src, srcs } = await readJsonBody(req);
+      const list = Array.isArray(srcs) ? srcs : src ? [src] : [];
+      if (!list.length || list.some((s) => typeof s !== "string")) throw new ContentError("no_photos", "No photos selected.");
+      const slug = gallerySlug(gallery);
+      const r = await engine.removePhotos(slug, list, hints(req));
+      return withSnapshot({ ...r, alreadyGone: r.alreadyGone }, slug);
     },
 
     async restore(req) {
-      const { gallery, src } = await readJsonBody(req);
-      return ok(await engine.restorePhoto(String(gallery || ""), String(src || ""), hints(req)));
+      const { gallery, src, items } = await readJsonBody(req);
+      const list = Array.isArray(items) ? items : src ? [{ src }] : [];
+      if (!list.length || list.length > 500 || list.some((i) => !i || typeof i.src !== "string")) {
+        throw new ContentError("no_photos", "Nothing to restore.");
+      }
+      const slug = gallerySlug(gallery);
+      return withSnapshot(await engine.restorePhotos(slug, list, hints(req)), slug);
     },
 
     async reorder(req) {
@@ -111,34 +138,36 @@ export function createHandler({ auth, engine, gh, fetchLiveCommit, prodBranch = 
       if (!Array.isArray(order) || order.length > 2000 || order.some((s) => typeof s !== "string")) {
         throw new ContentError("bad_order", "The new order was malformed. Please refresh the page.");
       }
-      return ok(await engine.reorder(String(gallery || ""), order, hints(req)));
+      const slug = gallerySlug(gallery);
+      return withSnapshot(await engine.reorder(slug, order, hints(req)), slug);
     },
 
     async "moments-add"(req) {
       const { amount } = await readJsonBody(req);
-      return ok(await engine.addToMoments(amount, hints(req)));
+      return withSnapshot(await engine.addToMoments(amount, hints(req)));
     },
 
     async "moments-set"(req) {
       const { value, expected } = await readJsonBody(req);
-      return ok(await engine.setMoments(value, expected, hints(req)));
+      return withSnapshot(await engine.setMoments(value, expected, hints(req)));
     },
 
     async discard(req) {
-      return ok(await engine.discard(hints(req)));
+      const { gallery } = await readJsonBody(req);
+      return withSnapshot(await engine.discard(hints(req)), gallery ? gallerySlug(gallery) : null);
     },
 
     async publish(req) {
       const { draftSha } = await readJsonBody(req);
-      if (typeof draftSha !== "string" || !/^[0-9a-f]{40}$/.test(draftSha)) {
+      if (typeof draftSha !== "string" || !SHA.test(draftSha)) {
         throw new ContentError("bad_draft", "Please refresh the page and review your changes before publishing.");
       }
-      return ok(await engine.publish(draftSha, hints(req)));
+      return withSnapshot(await engine.publish(draftSha, hints(req)));
     },
 
     async "publish-status"(req) {
       const { productionSha } = await readJsonBody(req);
-      if (typeof productionSha !== "string" || !/^[0-9a-f]{40}$/.test(productionSha)) {
+      if (typeof productionSha !== "string" || !SHA.test(productionSha)) {
         throw new ContentError("bad_sha", "Missing publish reference.");
       }
       return ok(await liveStatus(productionSha));
@@ -178,17 +207,20 @@ export function createHandler({ auth, engine, gh, fetchLiveCommit, prodBranch = 
       if (!Object.hasOwn(ops, op)) return fail(404, "unknown_op", "Unknown action.");
 
       const header = req.headers.get("authorization") || "";
-      const token = header.startsWith("Bearer ") ? header.slice(7) : "";
-      if (!auth.verifySession(token)) {
+      const session = auth.readSession(header.startsWith("Bearer ") ? header.slice(7) : "");
+      if (!session) {
         return fail(401, "signed_out", "You've been signed out. Please enter your password again.");
       }
 
-      return await ops[op](req);
+      return await ops[op](req, session);
     } catch (err) {
       if (err instanceof ImageError) return fail(422, err.code, err.message);
       if (err instanceof ContentError) return fail(err.status, err.code, err.message);
       if (err instanceof GitHubError) {
         log.error?.(`[admin] GitHub error ${err.status} on ${op}: ${err.message} (${err.path})`);
+        if (err.rateLimited) {
+          return fail(429, "rate_limited", "Lots of changes in a short time, so storage asked for a short break. Nothing was lost.", { retryAfterSec: err.retryAfterSec || 60 });
+        }
         if (err.status === 401 || err.status === 403) {
           return fail(502, "storage_denied", "The photo manager can't save right now (storage access was refused). Nothing was lost. Tell Logan: \"GitHub access refused\".");
         }

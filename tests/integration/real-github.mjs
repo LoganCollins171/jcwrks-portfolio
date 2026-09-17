@@ -19,9 +19,11 @@ const PROD = `admin-it-prod-${stamp}`, DRAFT = `admin-it-draft-${stamp}`;
 const token = process.env.GH_TOKEN;
 const gh = createGitHub({ token, owner: OWNER, repo: REPO });
 const results = [];
+const timings = [];
 const created = [];
 const step = async (name, fn) => {
-  try { await fn(); results.push(["PASS", name]); }
+  const t0 = Date.now();
+  try { await fn(); results.push(["PASS", `${name} (${((Date.now() - t0) / 1000).toFixed(1)}s)`]); }
   catch (err) { results.push(["FAIL", name, err.message.split("\n")[0]]); }
 };
 
@@ -42,7 +44,10 @@ function makeSite(prod, draft) {
     const headers = { ...(opts.headers || {}) };
     if (op !== "login") headers.authorization = `Bearer ${session}`;
     const init = { method: "POST", headers, body: opts.raw ?? JSON.stringify(body || {}) };
+    engine.clearCaches(); // every request cold, like a fresh function instance
+    const t = Date.now();
     const r = await handle(new Request(`https://it.test/api/admin?op=${op}`, init));
+    timings.push([op, Date.now() - t]);
     return { status: r.status, body: await r.json() };
   };
   return {
@@ -60,7 +65,7 @@ const treeMap = async (ref) => new Map((await gh.getTree((await gh.getCommit(awa
 
 try {
   const mainSha = await gh.getRef("main");
-  const stagingSha = await gh.getRef("staging");
+  const stagingSha = "2969db0c2f951a8f9c4c8e1309ab064f6f6df0fe"; // backup/pre-admin-upgrade-staging (the real stranded state)
   await gh.createRef(PROD, mainSha);
   created.push(PROD);
   const site = makeSite(PROD, DRAFT);
@@ -102,7 +107,13 @@ try {
 
   await step("reorder + remove one test photo + Moments +10 = accurate summary", async () => {
     assert.equal((await site.call("reorder", { gallery: "track", order: [added[1], added[0]] })).status, 200);
-    assert.equal((await site.call("remove", { gallery: "track", src: added[0] })).body.removed, true);
+    const rm = await site.call("remove", { gallery: "track", srcs: [added[0]] });
+    assert.equal(rm.body.removed.length, 1);
+    assert.deepEqual(rm.body.snapshot.gallery.photos.map((p) => p.src), [added[1]], "write returns fresh gallery");
+    // undo a never-published photo by sha, then remove it again
+    const undo = await site.call("restore", { gallery: "track", items: rm.body.removed.map(({ src, sha, index }) => ({ src, sha, index })) });
+    assert.equal(undo.body.restored.length, 1, JSON.stringify(undo.body));
+    assert.equal((await site.call("remove", { gallery: "track", srcs: [added[0]] })).body.removed.length, 1);
     assert.equal((await site.call("moments-add", { amount: 10 })).body.after, 68537);
     const s = await site.call("state");
     assert.deepEqual(s.body.changes.lines, ["Track: 1 photo added", "Moments Captured: 68,527 → 68,537 (+10)"]);
@@ -139,6 +150,8 @@ try {
     }
     const after = await site.call("state");
     assert.equal(after.body.changes.hasChanges, false);
+    assert.deepEqual(p.body.snapshot.state.lastPublished.galleries, ["Track"]);
+    assert.equal(p.body.snapshot.state.lastPublished.moments, true);
   });
 
   await step("live detection via real compare API", async () => {
@@ -166,7 +179,7 @@ try {
 
   // Scenario B: today's real staging (stranded shrink commit 2969db0) as the draft.
   const PROD_B = `admin-it-prodB-${stamp}`, DRAFT_B = `admin-it-draftB-${stamp}`;
-  await gh.createRef(PROD_B, mainSha); created.push(PROD_B);
+  await gh.createRef(PROD_B, "0081fbb4b81ecff7e174c52ff6934ab2028add56"); created.push(PROD_B); // backup/pre-admin-upgrade-main
   await gh.createRef(DRAFT_B, stagingSha); created.push(DRAFT_B);
   const siteB = makeSite(PROD_B, DRAFT_B);
   await siteB.login();
@@ -183,6 +196,9 @@ try {
     results.push(["CLEANUP", `delete ${b}: ${st}`]);
   }
   console.log("=== real GitHub integration ===");
+  const agg = {};
+  for (const [op, ms] of timings) (agg[op] ||= []).push(ms);
+  console.log("cold request latency by op (ms, median/max): " + Object.entries(agg).map(([op, a]) => { a.sort((x, y) => x - y); return `${op} ${a[a.length >> 1]}/${a.at(-1)}`; }).join(", "));
   for (const r of results) console.log(r.join("  "));
   process.exit(results.some((r) => r[0] === "FAIL") ? 1 : 0);
 }

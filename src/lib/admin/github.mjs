@@ -1,11 +1,13 @@
-// Minimal GitHub Git Data API client used by the /admin backend.
+// Minimal GitHub REST client used by the /admin backend.
 // fetch is injectable so tests can run against an in-memory fake.
 
 export class GitHubError extends Error {
-  constructor(status, message, path) {
+  constructor(status, message, path, { rateLimited = false, retryAfterSec = null } = {}) {
     super(message);
     this.status = status;
     this.path = path;
+    this.rateLimited = rateLimited;
+    this.retryAfterSec = retryAfterSec;
   }
 }
 
@@ -17,13 +19,26 @@ export class RefConflictError extends Error {
   }
 }
 
-export function createGitHub({ token, owner, repo, fetchImpl = fetch, apiBase = "https://api.github.com" }) {
+function rateLimitInfo(res, data) {
+  const msg = String(data?.message || "");
+  const limited = res.status === 429 || (res.status === 403 && (/rate limit/i.test(msg) || res.headers.get("x-ratelimit-remaining") === "0"));
+  if (!limited) return null;
+  let retryAfterSec = Number(res.headers.get("retry-after")) || null;
+  const reset = Number(res.headers.get("x-ratelimit-reset"));
+  if (!retryAfterSec && reset) retryAfterSec = Math.max(1, Math.ceil(reset - Date.now() / 1000));
+  return { rateLimited: true, retryAfterSec: Math.min(retryAfterSec || 60, 3600) };
+}
+
+export function createGitHub({ token, owner, repo, fetchImpl = fetch, apiBase = "https://api.github.com", sleep = (ms) => new Promise((r) => setTimeout(r, ms)) }) {
   const base = `/repos/${owner}/${repo}`;
 
+  // GETs and content-addressed creates (blob/tree/commit) are safe to repeat, so
+  // a temporary GitHub hiccup (network, 5xx) is retried once. Ref updates are
+  // compare-and-swap, so a repeat can't do harm either.
   async function call(path, method = "GET", body) {
-    const attempts = method === "GET" ? 2 : 1;
     let lastErr;
-    for (let i = 0; i < attempts; i++) {
+    for (let attempt = 0; attempt < 2; attempt++) {
+      if (attempt) await sleep(400);
       let res;
       try {
         res = await fetchImpl(`${apiBase}${path}`, {
@@ -45,8 +60,9 @@ export function createGitHub({ token, owner, repo, fetchImpl = fetch, apiBase = 
       let data;
       try { data = text ? JSON.parse(text) : {}; } catch { data = { raw: text }; }
       if (res.ok) return data;
-      lastErr = new GitHubError(res.status, data?.message || `GitHub ${res.status}`, path);
-      if (res.status < 500) break;
+      const limit = rateLimitInfo(res, data);
+      lastErr = new GitHubError(res.status, data?.message || `GitHub ${res.status}`, path, limit || {});
+      if (limit || res.status < 500) break;
     }
     throw lastErr;
   }
@@ -106,6 +122,16 @@ export function createGitHub({ token, owner, repo, fetchImpl = fetch, apiBase = 
     async compare(baseSha, headSha) {
       const c = await call(`${base}/compare/${baseSha}...${headSha}?per_page=1`);
       return { status: c.status, mergeBase: c.merge_base_commit?.sha || null };
+    },
+    /** Newest commits on a branch: [{ sha, message, date }] */
+    async listCommits(branch, perPage = 30) {
+      const list = await call(`${base}/commits?sha=${encodeURIComponent(branch)}&per_page=${perPage}`);
+      return (Array.isArray(list) ? list : []).map((c) => ({ sha: c.sha, message: c.commit?.message || "", date: c.commit?.committer?.date || null }));
+    },
+    /** Paths changed by a commit (vs its first parent). */
+    async getCommitFiles(sha) {
+      const c = await call(`${base}/commits/${sha}`);
+      return (c.files || []).map((f) => f.filename);
     },
   };
 }

@@ -52,7 +52,7 @@ for (const root of ROOTS) {
         withoutEnlargement: true,
       });
       // Keep the format the file already is — PNG for transparency, WebP
-      // because the CMS now uploads WebP. Re-encoding a .webp as jpeg would
+      // because /admin uploads WebP (or JPEG). Re-encoding a .webp as jpeg would
       // leave JPEG bytes sitting behind a .webp extension.
       let out;
       if (ext === ".png") {

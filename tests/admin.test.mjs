@@ -161,7 +161,7 @@ test("path traversal and forged receipts can't write outside the gallery", async
   const tampered = { ...up.body.receipt, ext: "webp" };
   assert.equal((await site.call("add", { gallery: "baseball", files: [tampered] }, { token })).body.error.code, "bad_receipt");
   assert.equal((await site.call("add", { gallery: "../pages", files: [up.body.receipt] }, { token })).body.error.code, "bad_gallery");
-  assert.equal((await site.call("remove", { gallery: "baseball", src: "/../../src/pages/index.astro" }, { token })).body.alreadyGone, true);
+  assert.equal((await site.call("remove", { gallery: "baseball", src: "/../../src/pages/index.astro" }, { token })).body.alreadyGone, 1);
   assert.ok(site.fake.files("staging")["src/pages/index.astro"]);
 });
 
@@ -171,7 +171,7 @@ test("delete: removed from the draft list and folder, production untouched, stat
   const site = await createTestSite();
   const token = await site.login();
   const r = await site.call("remove", { gallery: "baseball", src: "/galleries/baseball/a.webp" }, { token });
-  assert.equal(r.body.removed, true);
+  assert.equal(r.body.removed.length, 1);
   assert.deepEqual(order(site, "staging", "baseball"), ["/galleries/baseball/c.webp", "/galleries/baseball/b.webp"]);
   assert.equal(site.fake.files("staging")["public/galleries/baseball/a.webp"], undefined);
   assert.ok(site.fake.files("main")["public/galleries/baseball/a.webp"], "live copy kept until publish");
@@ -181,7 +181,7 @@ test("delete: removed from the draft list and folder, production untouched, stat
   assert.equal(s.changes.galleries[0].removedPhotos[0].src, "/galleries/baseball/a.webp");
 
   const back = await site.call("restore", { gallery: "baseball", src: "/galleries/baseball/a.webp" }, { token });
-  assert.equal(back.body.restored, true);
+  assert.deepEqual(back.body.restored, ["/galleries/baseball/a.webp"]);
   assert.deepEqual(order(site, "staging", "baseball"), ["/galleries/baseball/c.webp", "/galleries/baseball/a.webp", "/galleries/baseball/b.webp"], "back in its original spot");
   s = await state(site, token);
   assert.equal(s.changes.hasChanges, false);
@@ -193,7 +193,7 @@ test("deleting a photo twice is harmless", async () => {
   await site.call("remove", { gallery: "baseball", src: "/galleries/baseball/a.webp" }, { token });
   const again = await site.call("remove", { gallery: "baseball", src: "/galleries/baseball/a.webp" }, { token });
   assert.equal(again.status, 200);
-  assert.equal(again.body.alreadyGone, true);
+  assert.equal(again.body.alreadyGone, 1);
 });
 
 test("reorder: saved explicitly, reload shows it, publish keeps it, stats untouched", async () => {
@@ -398,7 +398,7 @@ test("publish failure (GitHub error) leaves production and the draft intact, and
   await site.call("moments-add", { amount: 7 }, { token });
   const s = await state(site, token);
   const mainBefore = site.fake.ref("main");
-  site.fake.fault("PATCH", /refs\/heads\/main$/, 500, 1);
+  site.fake.fault("PATCH", /refs\/heads\/main$/, 500, 2); // one automatic retry, then it gives up
   const p = await site.call("publish", { draftSha: s.draftSha }, { token });
   assert.equal(p.status, 502);
   assert.match(p.body.error.message, /Nothing was lost/);
@@ -548,4 +548,153 @@ test("a lagging GitHub read never shows older state when the browser knows a new
   const bogus = await site.call("state", {}, { token, headers: { "x-known-draft": "f".repeat(40) } });
   assert.equal(bogus.status, 200, "unknown hints are ignored safely");
   site.fake.refs.set("staging", newer);
+});
+
+// ---------------- polish-round additions ----------------
+
+const stripVolatile = (s) => { const { deploy, renewedSession, ...rest } = s; return rest; };
+
+test("every write answers with the exact fresh state (no second round trip needed)", async () => {
+  const site = await createTestSite();
+  const token = await site.login();
+  const writes = [
+    null,
+    () => site.call("remove", { gallery: "baseball", srcs: ["/galleries/baseball/b.webp"] }, { token }),
+    () => site.call("reorder", { gallery: "baseball", order: ["/galleries/baseball/a.webp"] }, { token }),
+    () => site.call("moments-add", { amount: 4 }, { token }),
+    () => site.call("restore", { gallery: "baseball", items: [{ src: "/galleries/baseball/b.webp" }] }, { token }),
+  ];
+  const img = await makeImage();
+  writes[0] = () => uploadAndAdd(site, token, "baseball", [{ buf: img, name: "fresh.jpg" }]);
+  for (const w of writes) {
+    const r = await w();
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    const fresh = await site.call("state", {}, { token });
+    const { ok: _o, ...freshBody } = stripVolatile(fresh.body);
+    assert.deepEqual(r.body.snapshot.state, freshBody);
+    const g = await site.call("gallery", { gallery: "baseball" }, { token });
+    const { ok: _ok, ...galleryBody } = g.body;
+    if (r.body.snapshot.gallery) assert.deepEqual(r.body.snapshot.gallery, galleryBody);
+  }
+  const s = await site.call("state", {}, { token });
+  const p = await site.call("publish", { draftSha: s.body.draftSha }, { token });
+  const after = await site.call("state", {}, { token });
+  const { ok: _a, ...afterBody } = stripVolatile(after.body);
+  assert.deepEqual(p.body.snapshot.state, afterBody);
+  assert.equal(p.body.snapshot.state.changes.hasChanges, false);
+});
+
+test("batch remove is one change; undo restores live AND never-published photos in place", async () => {
+  const site = await createTestSite();
+  const token = await site.login();
+  const add = await uploadAndAdd(site, token, "baseball", [{ buf: await makeImage(), name: "new-one.jpg" }]);
+  const newSrc = add.body.added[0].src;
+  const before = order(site, "staging", "baseball");
+  const commits = site.fake.commits.size;
+  const r = await site.call("remove", { gallery: "baseball", srcs: ["/galleries/baseball/a.webp", newSrc, "/galleries/baseball/nope.webp"] }, { token });
+  assert.equal(site.fake.commits.size, commits + 1, "one commit");
+  assert.equal(r.body.removed.length, 2);
+  assert.equal(r.body.alreadyGone, 1);
+  assert.deepEqual(r.body.snapshot.gallery.photos.map((p) => p.src), before.filter((s) => s !== newSrc && s !== "/galleries/baseball/a.webp"));
+  const summary = r.body.snapshot.state.changes;
+  assert.deepEqual(summary.lines, ["Baseball: 1 photo removed"], "never-published photo just disappears from the draft");
+  const u = await site.call("restore", { gallery: "baseball", items: r.body.removed.map(({ src, sha, index, alt }) => ({ src, sha, index, alt })) }, { token });
+  assert.equal(u.body.restored.length, 2);
+  assert.deepEqual(order(site, "staging", "baseball"), before, "exact original order back");
+  assert.equal(u.body.snapshot.state.changes.lines[0], "Baseball: 1 photo added");
+});
+
+test("restore by sha refuses blobs that aren't photos and bad paths", async () => {
+  const site = await createTestSite();
+  const token = await site.login();
+  const jsonSha = (await import("./helpers/fake-github.mjs")).blobSha(site.fake.files("staging")["src/data/stats.json"]);
+  const r = await site.call("restore", { gallery: "baseball", items: [
+    { src: "/galleries/baseball/evil.jpg", sha: jsonSha },
+    { src: "/galleries/baseball/../../../src/pages/x.jpg", sha: jsonSha },
+    { src: "/galleries/baseball/ghost.jpg" },
+  ] }, { token });
+  assert.equal(r.status, 200);
+  assert.equal(r.body.restored.length, 0);
+  assert.equal(r.body.failed.length, 3);
+  assert.equal(r.body.changed, false);
+});
+
+test("dashboard knows the last publish (date + galleries) from history", async () => {
+  const site = await createTestSite();
+  const token = await site.login();
+  let s = (await site.call("state", {}, { token })).body;
+  assert.equal(s.lastPublished, null);
+  assert.equal(s.totalPhotos, 6);
+  assert.equal(s.galleries.find((g) => g.slug === "baseball").cover.url.includes("c.webp"), true);
+  await uploadAndAdd(site, token, "hockey", [{ buf: await makeImage(), name: "h.jpg" }]);
+  await site.call("moments-add", { amount: 2 }, { token });
+  s = (await site.call("state", {}, { token })).body;
+  assert.equal(s.galleries.find((g) => g.slug === "hockey").changed, true);
+  const p = await site.call("publish", { draftSha: s.draftSha }, { token });
+  const last = p.body.snapshot.state.lastPublished;
+  assert.ok(last && last.date);
+  assert.deepEqual(last.galleries, ["Hockey"]);
+  assert.equal(last.moments, true);
+  site.fake.commitTo("main", { "src/pages/index.astro": "code only" }, "Code change");
+  s = (await site.call("state", {}, { token })).body;
+  assert.deepEqual(s.lastPublished.galleries, ["Hockey"], "code pushes don't count as publishes");
+});
+
+test("GitHub rate limit becomes a calm, retryable message (not 'tell Logan')", async () => {
+  const site = await createTestSite();
+  const token = await site.login();
+  site.fake.fault("POST", /git\/blobs$/, 403, 1, "You have exceeded a secondary rate limit", { "retry-after": "30" });
+  const r = await site.call("upload", undefined, { token, raw: await makeImage() });
+  assert.equal(r.status, 429);
+  assert.equal(r.body.error.code, "rate_limited");
+  assert.equal(r.body.error.retryAfterSec, 30);
+  assert.doesNotMatch(r.body.error.message, /Logan/);
+  const again = await site.call("upload", undefined, { token, raw: await makeImage() });
+  assert.equal(again.status, 200);
+});
+
+test("a temporary GitHub 5xx or network blip is retried automatically", async () => {
+  const site = await createTestSite();
+  const token = await site.login();
+  site.fake.fault("POST", /git\/blobs$/, 502, 1);
+  assert.equal((await site.call("upload", undefined, { token, raw: await makeImage() })).status, 200);
+  site.fake.fault("POST", /git\/commits$/, 0, 1);
+  assert.equal((await site.call("moments-add", { amount: 1 }, { token })).status, 200);
+});
+
+test("an active session is quietly extended; an idle one still expires", async () => {
+  const site = await createTestSite();
+  const token = await site.login();
+  site.advance(25 * 24 * 60 * 60 * 1000);
+  const s = await site.call("state", {}, { token });
+  assert.ok(s.body.renewedSession?.token, "renewed near expiry");
+  site.advance(10 * 24 * 60 * 60 * 1000);
+  assert.equal((await site.call("state", {}, { token })).status, 401, "old token expired");
+  assert.equal((await site.call("state", {}, { token: s.body.renewedSession.token })).status, 200, "renewed token works");
+});
+
+test("API call budget per action on a cold function (keeps /admin fast)", async () => {
+  const site = await createTestSite();
+  const token = await site.login();
+  const cold = async (fn) => { site.engine.clearCaches(); const n = site.fake.calls.length; await fn(); return site.fake.calls.length - n; };
+  const open = await cold(async () => { await site.call("state", {}, { token }); site.engine.clearCaches(); await site.call("gallery", { gallery: "baseball" }, { token }); });
+  const remove = await cold(() => site.call("remove", { gallery: "baseball", srcs: ["/galleries/baseball/a.webp"] }, { token }));
+  const moments = await cold(() => site.call("moments-add", { amount: 1 }, { token }));
+  const s = await site.call("state", {}, { token });
+  const publish = await cold(() => site.call("publish", { draftSha: s.body.draftSha }, { token }));
+  assert.ok(open <= 16, `open ${open}`);
+  assert.ok(remove <= 18, `remove ${remove}`);
+  assert.ok(moments <= 18, `moments ${moments}`);
+  assert.ok(publish <= 20, `publish ${publish}`);
+});
+
+test("undo after a reorder puts live photos back at their draft position, not their live one", async () => {
+  const site = await createTestSite();
+  const token = await site.login();
+  // live order c, a, b; draft order becomes b, c, a
+  await site.call("reorder", { gallery: "baseball", order: ["/galleries/baseball/b.webp", "/galleries/baseball/c.webp", "/galleries/baseball/a.webp"] }, { token });
+  const before = order(site, "staging", "baseball");
+  const r = await site.call("remove", { gallery: "baseball", srcs: ["/galleries/baseball/b.webp", "/galleries/baseball/a.webp"] }, { token });
+  await site.call("restore", { gallery: "baseball", items: r.body.removed.map(({ src, sha, index }) => ({ src, sha, index })) }, { token });
+  assert.deepEqual(order(site, "staging", "baseball"), before);
 });

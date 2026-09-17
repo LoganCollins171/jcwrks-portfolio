@@ -102,7 +102,7 @@ export function createFakeGitHub({ owner = "o", repo = "r" } = {}) {
       if (f.remaining > 0 && f.method === method && f.path.test(path)) {
         f.remaining--;
         if (f.status === 0) throw new TypeError("fetch failed");
-        return res(f.status, { message: f.message || "injected fault" });
+        return new Response(JSON.stringify({ message: f.message || "injected fault" }), { status: f.status, headers: { "content-type": "application/json", ...(f.headers || {}) } });
       }
     }
     await new Promise((r) => setImmediate(r)); // let concurrent requests interleave
@@ -176,13 +176,40 @@ export function createFakeGitHub({ owner = "o", repo = "r" } = {}) {
       else if (ancestors(base).has(head)) status = "behind";
       return res(200, { status, merge_base_commit: { sha: mergeBase(base, head) } });
     }
+    if (method === "GET" && path === "/commits") {
+      const start = refs.get(u.searchParams.get("sha")) || u.searchParams.get("sha");
+      const per = Number(u.searchParams.get("per_page") || 30);
+      const out = [];
+      const seen = new Set();
+      let frontier = [start];
+      while (frontier.length && out.length < per) {
+        frontier.sort((a, b) => (commits.get(b)?.date || "").localeCompare(commits.get(a)?.date || ""));
+        const sha = frontier.shift();
+        if (!sha || seen.has(sha) || !commits.has(sha)) continue;
+        seen.add(sha);
+        const c = commits.get(sha);
+        out.push({ sha, commit: { message: c.message, committer: { date: c.date } } });
+        frontier.push(...c.parents);
+      }
+      return res(200, out);
+    }
+    if (method === "GET" && (m = path.match(/^\/commits\/([0-9a-f]+)$/))) {
+      const c = commits.get(m[1]);
+      if (!c) return res(404, { message: "Not Found" });
+      const now = trees.get(c.tree);
+      const prev = c.parents[0] ? trees.get(commits.get(c.parents[0]).tree) : new Map();
+      const files = [];
+      for (const [p, e] of now) if (prev.get(p)?.sha !== e.sha) files.push({ filename: p });
+      for (const p of prev.keys()) if (!now.has(p)) files.push({ filename: p });
+      return res(200, { sha: c.sha, files });
+    }
     return res(404, { message: `fake: no route for ${method} ${path}` });
   }
 
   return {
     fetchImpl, seed, commitTo, files, refs, commits, blobs, hooks, calls,
-    fault(method, path, status, times = 1, message) {
-      hooks.faults.push({ method, path, status, remaining: times, message });
+    fault(method, path, status, times = 1, message, headers) {
+      hooks.faults.push({ method, path, status, remaining: times, message, headers });
     },
     ref: (b) => refs.get(b),
     setClock: (ms) => { clock = ms; },

@@ -3,7 +3,7 @@ import { site } from "../data/site";
 import Socials from "./Socials.astro";
 import { getMomentsCaptured } from "../lib/stats";
 const year = 2026; // Date.now() unavailable at build in this env; bump as needed
-// Jacob's real career total if he's set one in the CMS, otherwise a count of
+// Jacob's real career total if he's set one in /admin, otherwise a count of
 // what's uploaded here. See src/lib/stats.ts.
 const totalPhotos = getMomentsCaptured();
 ---
