@@ -1,7 +1,7 @@
 // The /admin content engine.
 //
 // ONE writer, ONE pipeline:
-//   - Every change Jacob makes (add, remove, restore, reorder, Moments Captured,
+//   - Every change Jacob makes (add, remove, restore, reorder, cover, Moments Captured,
 //     discard) is ONE atomic commit on the `staging` branch (his draft).
 //   - Commits are compare-and-swap: the branch only moves if nobody else moved
 //     it first. If it did, we re-read and re-apply the change (it is stored as
@@ -20,7 +20,7 @@ import { RefConflictError } from "./github.mjs";
 import { validateImage } from "./images.mjs";
 import {
   GALLERY_SLUGS, GALLERY_TITLES, GALLERIES_PREFIX, GALLERY_DATA_PREFIX, STATS_PATH,
-  IMAGE_EXT, isContentPath, mergeGallery, movedCount, srcKey,
+  IMAGE_EXT, ORIGINAL_COVERS, isContentPath, mergeGallery, movedCount, resolveCover, srcKey,
 } from "../gallery-model.mjs";
 
 export class ContentError extends Error {
@@ -114,7 +114,10 @@ export function createContentEngine({
       else draftContent.set(path, after);
     }
 
-    return { mainHead, stagingHead, mergeBase, mainTreeSha: mainT.treeSha, mainContent, draftContent };
+    // Designed covers (public/covers/) are code, so they always come from main.
+    const coverFiles = new Set(mainT.entries.filter((e) => e.path.startsWith("public/covers/")).map((e) => e.path));
+
+    return { mainHead, stagingHead, mergeBase, mainTreeSha: mainT.treeSha, mainContent, draftContent, coverFiles };
   }
 
   function diffEntries(from, to) {
@@ -154,6 +157,17 @@ export function createContentEngine({
     return { jsonPath, data, images, missing: merged.missing, extras: merged.extras };
   }
 
+  /** The album's cover under the shared rule (gallery-model.mjs resolveCover). */
+  function coverOf(ctx, view, slug) {
+    const original = ORIGINAL_COVERS[slug] || null;
+    return resolveCover({
+      cover: view.data.cover,
+      images: view.images,
+      original: original?.src ?? null,
+      exists: (src) => !!ctx.coverFiles?.has("public" + src),
+    });
+  }
+
   const encodePath = (src) => src.split("/").map(encodeURIComponent).join("/");
   const rawUrl = (commitSha, src) => (rawBase ? `${rawBase}/${commitSha}/public${encodePath(src)}` : `/public${src}`);
 
@@ -162,6 +176,26 @@ export function createContentEngine({
     const fallbackUrl = rawUrl(commitSha, img.src);
     const url = liveBase && ctx.mainContent.get("public" + img.src) === img.sha ? liveBase + encodePath(img.src) : fallbackUrl;
     return { url, fallbackUrl };
+  }
+
+  /** A designed cover's thumbnail: the live copy, else main's copy on GitHub. */
+  function designedUrls(ctx, src) {
+    const fallbackUrl = rawUrl(ctx.mainHead, src);
+    return { url: liveBase ? liveBase + encodePath(src) : fallbackUrl, fallbackUrl };
+  }
+
+  /**
+   * What /admin needs to show an album's cover.
+   * photo = the album photo that is the cover (a designed cover counts as the photo it was cut from).
+   */
+  function coverInfo(ctx, commitSha, view, slug) {
+    const c = coverOf(ctx, view, slug);
+    if (!c.src) return null;
+    const img = view.images.find((i) => i.src === c.src);
+    if (img) return { kind: c.kind, stale: c.stale, photo: img.src, sha: img.sha, ...photoUrls(ctx, commitSha, img) };
+    const cutFrom = ORIGINAL_COVERS[slug]?.src === c.src ? ORIGINAL_COVERS[slug].photo : null;
+    const photo = cutFrom ? findImage(view, cutFrom)?.src || null : null;
+    return { kind: c.kind, stale: c.stale, photo, ...designedUrls(ctx, c.src) };
   }
 
   async function readStats(content) {
@@ -189,9 +223,12 @@ export function createContentEngine({
       const replaced = draft.images.filter((i) => liveKeys.has(srcKey(i.src)) && liveKeys.get(srcKey(i.src)).sha !== i.sha);
       const captions = draft.images.filter((i) => liveKeys.has(srcKey(i.src)) && (liveKeys.get(srcKey(i.src)).alt || "") !== (i.alt || ""));
       const moved = movedCount(live.images.map((i) => i.src), draft.images.map((i) => i.src));
+      const liveCover = coverOf(ctx, live, slug).src;
+      const draftCover = coverOf(ctx, draft, slug).src;
+      const coverChanged = liveCover !== draftCover;
 
       for (const e of entries) if (e.path.startsWith(folder) || e.path === jsonPath) explained.add(e.path);
-      const housekeeping = !added.length && !removed.length && !replaced.length && !captions.length && !moved;
+      const housekeeping = !added.length && !removed.length && !replaced.length && !captions.length && !moved && !coverChanged;
       galleries.push({
         slug,
         title: GALLERY_TITLES[slug],
@@ -200,6 +237,8 @@ export function createContentEngine({
         replaced: replaced.length,
         moved,
         captions: captions.length,
+        coverChanged,
+        draftCover,
         housekeeping,
         liveCount: live.images.length,
         draftCount: draft.images.length,
@@ -221,6 +260,7 @@ export function createContentEngine({
       if (g.replaced) bits.push(`${plural(g.replaced, "photo")} updated`);
       if (g.moved) bits.push(`${plural(g.moved, "photo")} moved`);
       if (g.captions) bits.push(`${plural(g.captions, "caption")} changed`);
+      if (g.coverChanged) bits.push("new cover");
       lines.push(`${g.title}: ${bits.join(", ")}`);
     }
     if (draftStats.value !== liveStats.value) {
@@ -265,16 +305,13 @@ export function createContentEngine({
     const views = await Promise.all(GALLERY_SLUGS.map((slug) => galleryView(ctx.draftContent, slug)));
     const changes = await summarize(ctx);
     const changedSlugs = new Set(changes.galleries.filter((g) => !g.housekeeping).map((g) => g.slug));
-    const galleries = GALLERY_SLUGS.map((slug, i) => {
-      const first = views[i].images[0];
-      return {
-        slug,
-        title: GALLERY_TITLES[slug],
-        count: views[i].images.length,
-        changed: changedSlugs.has(slug),
-        cover: first ? { sha: first.sha, ...photoUrls(ctx, ctx.stagingHead, first) } : null,
-      };
-    });
+    const galleries = GALLERY_SLUGS.map((slug, i) => ({
+      slug,
+      title: GALLERY_TITLES[slug],
+      count: views[i].images.length,
+      changed: changedSlugs.has(slug),
+      cover: coverInfo(ctx, ctx.stagingHead, views[i], slug),
+    }));
     let published = null;
     try { published = await lastPublished(ctx.mainHead); } catch { published = null; }
     return {
@@ -291,10 +328,17 @@ export function createContentEngine({
 
   async function galleryFrom(ctx, slug) {
     const view = await galleryView(ctx.draftContent, slug);
+    const original = ORIGINAL_COVERS[slug];
+    const originalCover = original && ctx.coverFiles?.has("public" + original.src)
+      ? { src: original.src, photo: findImage(view, original.photo)?.src || null, ...designedUrls(ctx, original.src) }
+      : null;
     return {
       draftSha: ctx.stagingHead,
       gallery: slug,
       title: GALLERY_TITLES[slug],
+      cover: coverInfo(ctx, ctx.stagingHead, view, slug),
+      coverSetting: typeof view.data.cover === "string" ? view.data.cover : null,
+      originalCover,
       photos: view.images.map((i) => ({
         src: i.src,
         sha: i.sha,
@@ -540,6 +584,34 @@ export function createContentEngine({
         for (const i of view.images) if (!used.has(srcKey(i.src))) images.push(i);
         await writeJson(work, newBlobs, view.jsonPath, { ...view.data, images: plain(images) });
         return { order: images.map((i) => i.src) };
+      }, hints);
+    },
+
+    /**
+     * Pick the album's cover. `src` is a photo in the album, or the album's original
+     * designed cover. Only the `cover` field changes; the photo list is left exactly as is.
+     * `undo: true` puts back an earlier setting as it was (null = no setting), even a photo
+     * that has since been removed (the shared rule then shows the fallback).
+     */
+    async setCover(slug, src, { undo = false } = {}, hints) {
+      assertGallery(slug);
+      if (!(typeof src === "string" && src) && !(undo && src === null)) {
+        throw new ContentError("bad_cover", "Pick a photo for the cover.");
+      }
+      return change(`Change the ${slug} cover`, async (ctx, work, newBlobs) => {
+        const view = await galleryView(work, slug);
+        const original = ORIGINAL_COVERS[slug];
+        let next = null;
+        if (src !== null) {
+          const img = findImage(view, src);
+          if (img) next = img.src;
+          else if (original && srcKey(src) === srcKey(original.src) && ctx.coverFiles?.has("public" + original.src)) next = original.src;
+          else if (undo && src.startsWith(`/galleries/${slug}/`) && !src.slice(`/galleries/${slug}/`.length).includes("/") && IMAGE_EXT.test(src)) next = src;
+          else throw new ContentError("not_in_gallery", "That photo isn't in this gallery anymore. Please pick another one.", 409);
+        }
+        const { cover: previous, ...rest } = view.data;
+        await writeJson(work, newBlobs, view.jsonPath, next === null ? rest : { cover: next, ...rest });
+        return { cover: next, previous: typeof previous === "string" ? previous : null };
       }, hints);
     },
 

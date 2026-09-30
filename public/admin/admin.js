@@ -39,6 +39,7 @@
     view: null,           // "home" | "gallery"
     gallery: null,        // open gallery slug
     photos: [],           // saved draft order for the open gallery
+    cover: null,          // { info, original } for the open gallery (see content.mjs coverInfo)
     viewOrder: [],        // on-screen order (may be unsaved)
     tiles: new Map(),     // src -> tile element for the open gallery (reused so thumbnails never reload)
     tileCache: new Map(), // slug -> tiles Map, so reopening a gallery doesn't reload its thumbnails
@@ -212,6 +213,7 @@
         S.gallery = r.slug;
         S.photos = [];
         S.viewOrder = [];
+        S.cover = null;
         S.photosLoaded = false;
         clearTiles(r.slug);
         $("uploadPanel").hidden = true;
@@ -511,6 +513,7 @@
       if (g.replaced) add(`${plural(g.replaced, "photo")} updated`);
       if (g.moved) add("Order changed");
       if (g.captions) add(`${plural(g.captions, "caption")} changed`);
+      if (g.coverChanged) add("New cover");
       box.append(h, ul);
       items.push(box);
     }
@@ -555,6 +558,7 @@
     const wasDirty = orderDirty();
     const prevView = S.viewOrder;
     S.photos = g.photos;
+    S.cover = { info: g.cover || null, original: g.originalCover || null };
     const valid = new Set(g.photos.map((p) => p.src));
     // Keep an unsaved on-screen order only if it still covers exactly the saved photos.
     S.viewOrder = wasDirty && prevView.length === g.photos.length && prevView.every((s) => valid.has(s)) ? prevView : g.photos.map((p) => p.src);
@@ -580,6 +584,7 @@
     const n = S.photos.length || g?.count || 0;
     $("gCount").textContent = `${plural(n, "photo")}${newCount ? ` · ${fmt(newCount)} not live yet` : ""}`;
     document.title = `${g ? g.title : "Gallery"} · jc_wrks Portfolio Manager`;
+    renderCover();
   }
 
   function clearTiles(nextSlug) {
@@ -611,7 +616,11 @@
     const tick = document.createElement("span");
     tick.className = "tick";
     tick.setAttribute("aria-hidden", "true");
-    tile.append(img, num, badge, tick);
+    const coverTag = document.createElement("span");
+    coverTag.className = "cover-tag";
+    coverTag.textContent = "Cover";
+    coverTag.hidden = true;
+    tile.append(img, num, badge, tick, coverTag);
     tile.addEventListener("click", () => onTileActivate(tile.dataset.src));
     tile.addEventListener("keydown", (e) => {
       if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onTileActivate(tile.dataset.src); }
@@ -637,7 +646,9 @@
       }
       tile.querySelector(".num").textContent = i + 1;
       tile.querySelector(".badge").hidden = !p.isNew;
-      tile.setAttribute("aria-label", `Photo ${i + 1} of ${order.length}${p.isNew ? ", not live yet" : ""}`);
+      const isCover = src === coverPhoto();
+      tile.querySelector(".cover-tag").hidden = !isCover;
+      tile.setAttribute("aria-label", `Photo ${i + 1} of ${order.length}${isCover ? ", cover" : ""}${p.isNew ? ", not live yet" : ""}`);
       if (S.selecting) tile.setAttribute("aria-pressed", S.selected.has(src) ? "true" : "false");
       else tile.removeAttribute("aria-pressed");
       if (grid.children[i] !== tile) grid.insertBefore(tile, grid.children[i] || null);
@@ -649,7 +660,144 @@
       ? "Tap photos to select them."
       : "Press and hold a photo, then drag to change the order. Tap a photo for more options.";
     setupSortable();
+    renderCover();
     refreshControls();
+  }
+
+  // ------------------------------------------------------------------ cover
+  // The photo that stands for this gallery on the site. The server resolves it with the
+  // same rule as the site build (gallery-model.mjs resolveCover), so this is what shows.
+  const coverPhoto = () => S.cover?.info?.photo || null;
+
+  function renderCover() {
+    const block = $("coverBlock");
+    if (!S.gallery || !S.state) { block.hidden = true; return; }
+    const g = S.state.galleries.find((x) => x.slug === S.gallery);
+    const loaded = S.photosLoaded && !!S.cover;
+    const info = loaded ? S.cover.info : g?.cover || null;
+    const title = g ? g.title : S.gallery;
+    block.hidden = false;
+    $("coverName").textContent = title;
+    $("coverPreview").classList.toggle("is-empty", !info);
+    const img = $("coverImg");
+    img.hidden = !info;
+    if (info && img.dataset.url !== info.url) {
+      img.dataset.url = info.url;
+      img.onerror = () => { if (info.fallbackUrl && img.src !== info.fallbackUrl) img.src = info.fallbackUrl; };
+      img.src = info.url;
+    }
+    const pos = info?.photo ? S.viewOrder.indexOf(info.photo) : -1;
+    let text;
+    let note = "";
+    let noteKind = "";
+    if (!info) text = "Add photos to choose a cover for this gallery.";
+    else if (info.kind === "first" && info.stale) {
+      text = "Your first photo is standing in as the cover.";
+      note = "The photo you chose as the cover was removed. Choose a new one anytime.";
+      noteKind = "warn";
+    } else if (info.kind === "first") text = "Your first photo is the cover until you choose one.";
+    else if (info.kind === "original" && !info.photo) {
+      text = S.photos.length || !loaded ? "Your original cover. You can swap it for any photo in this gallery." : "Your original cover. Add photos to choose a different one.";
+    }
+    else text = pos >= 0 ? `Photo ${pos + 1} is what people see for ${title} on your site.` : `This is what people see for ${title} on your site.`;
+    if (!note && S.state.changes.galleries.some((x) => x.slug === S.gallery && x.coverChanged)) {
+      note = "New cover. It shows on your site after you publish.";
+      noteKind = "pending";
+    }
+    $("coverText").textContent = text;
+    const noteEl = $("coverNote");
+    noteEl.hidden = !note;
+    noteEl.textContent = note;
+    noteEl.className = "cover-note" + (noteKind ? " " + noteKind : "");
+    $("coverBtn").hidden = !loaded || S.photos.length === 0;
+  }
+
+  let pickSel = null;
+  function openCoverPicker() {
+    if (isBlocked() || S.selecting || !S.cover || !S.photos.length) return;
+    const d = $("coverDialog");
+    if (d.open) return;
+    const info = S.cover.info;
+    const orig = S.cover.original;
+    const title = titleOf(S.gallery);
+    // The original cover is only its own choice when it isn't one of the gallery's photos.
+    const showOriginal = !!orig && !orig.photo;
+    const current = info ? (info.kind === "original" && !info.photo ? orig?.src : info.photo) : null;
+    // A stand-in (first photo) can be chosen on purpose, which keeps it as the cover.
+    const pinned = info && info.kind !== "first";
+    $("coverHelp").textContent = `Pick the photo people see for ${title} on your site. Each one is cropped the way your site shows it.`;
+    const opts = [];
+    if (showOriginal) opts.push({ key: orig.src, url: orig.url, fallbackUrl: orig.fallbackUrl, name: "Original cover", label: "Original" });
+    S.viewOrder.forEach((src, i) => {
+      const p = photoBySrc(src);
+      if (p) opts.push({ key: src, url: p.url, fallbackUrl: p.fallbackUrl, name: `Photo ${i + 1}`, num: i + 1 });
+    });
+    pickSel = current;
+    const okBtn = $("coverOk");
+    const sync = () => {
+      for (const b of $("coverPicker").children) b.setAttribute("aria-pressed", b.dataset.key === pickSel ? "true" : "false");
+      okBtn.disabled = !pickSel || (pickSel === current && pinned);
+    };
+    const buttons = opts.map((o) => {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = "pick";
+      b.dataset.key = o.key;
+      const isCurrent = o.key === current;
+      b.setAttribute("aria-label", `${o.name}${isCurrent ? ", current cover" : ""}`);
+      const im = document.createElement("img");
+      im.alt = "";
+      im.loading = "lazy";
+      im.decoding = "async";
+      im.src = o.url;
+      im.onerror = () => { if (o.fallbackUrl && im.src !== o.fallbackUrl) im.src = o.fallbackUrl; };
+      b.appendChild(im);
+      if (o.num) { const n = document.createElement("span"); n.className = "num"; n.textContent = o.num; b.appendChild(n); }
+      const labelText = isCurrent ? "Current" : o.label;
+      if (labelText) { const l = document.createElement("span"); l.className = "label"; l.textContent = labelText; b.appendChild(l); }
+      const t = document.createElement("span");
+      t.className = "tick";
+      t.setAttribute("aria-hidden", "true");
+      b.appendChild(t);
+      b.onclick = () => { pickSel = o.key; sync(); };
+      return b;
+    });
+    $("coverPicker").replaceChildren(...buttons);
+    sync();
+    const done = () => { okBtn.onclick = $("coverCancel").onclick = null; d.oncancel = null; closeDialog(d); };
+    okBtn.onclick = () => { const src = pickSel; done(); if (src) chooseCover(src); };
+    $("coverCancel").onclick = done;
+    d.oncancel = (e) => { e.preventDefault(); done(); };
+    openDialog(d);
+    setTimeout(() => {
+      $("coverTitle").focus({ preventScroll: true });
+      buttons.find((b) => b.dataset.key === current)?.scrollIntoView({ block: "nearest" });
+    }, 30);
+  }
+
+  async function chooseCover(src) {
+    const slug = S.gallery;
+    await once("cover", () => withBusy(async () => {
+      try {
+        const r = await api("cover", { gallery: slug, src });
+        applySnapshot(r);
+        if (!r.changed) { toast("That's already the cover."); return; }
+        toast("Cover updated. Not live until you publish.", { action: "Undo", ms: 12000, onAction: () => undoCover(slug, r.previous) });
+      } catch (err) {
+        if (err.code !== "signed_out") showAlert(`The cover wasn't changed. ${err.message}`, { action: "Try again", onAction: () => chooseCover(src) });
+      }
+    }));
+  }
+
+  async function undoCover(slug, previous) {
+    await once("cover", () => withBusy(async () => {
+      try {
+        applySnapshot(await api("cover", { gallery: slug, src: previous ?? null, undo: true }));
+        toast("Cover change undone.");
+      } catch (err) {
+        if (err.code !== "signed_out") showAlert(`Couldn't undo the cover change. ${err.message}`);
+      }
+    }));
   }
 
   function renderRemoved() {
@@ -737,6 +885,10 @@
     $("moveToInput").value = "";
     $("moveToInput").placeholder = `1 to ${S.viewOrder.length}`;
     $("moveToForm").hidden = S.viewOrder.length < 3;
+    const isCover = src === coverPhoto() && S.cover?.info?.kind !== "first";
+    $("sheetCover").hidden = !S.cover;
+    $("sheetCover").disabled = isCover;
+    $("sheetCover").textContent = isCover ? "This is the cover" : "Use as cover";
     openDialog($("photoSheet"));
   }
 
@@ -1333,6 +1485,7 @@
         galleries: st.changes.galleries.filter((g) => !g.housekeeping).map((g) => ({ slug: g.slug, title: g.title, count: g.draftCount })),
         moments: st.stats.draft !== st.stats.live ? st.stats.draft : null,
         fromMoments: st.stats.live,
+        covers: st.changes.galleries.filter((g) => g.coverChanged && g.draftCover).map((g) => ({ slug: g.slug, title: g.title, src: g.draftCover })),
       };
       try {
         const r = await withBusy(() => api("publish", { draftSha: st.draftSha }));
@@ -1393,6 +1546,14 @@
             const n = (html.match(/data-src="/g) || []).length;
             if (n !== g.count) problems.push(g.title);
           } catch { problems.push(g.title); }
+        }),
+        // A new cover shows on the category tiles: Sports albums on /work/sports/, the rest on the homepage.
+        ...(exp.covers || []).map(async (c) => {
+          const label = `${c.title} cover`;
+          try {
+            const html = await (await fetch((SPORTS.includes(c.slug) ? "/work/sports/" : "/") + bust, { cache: "no-store" })).text();
+            if (!html.includes(`src="${c.src}"`) && !html.includes(`src="${c.src.replace(/&/g, "&amp;")}"`)) problems.push(label);
+          } catch { problems.push(label); }
         }),
         (async () => {
           if (!exp.moments) return;
@@ -1482,6 +1643,7 @@
     $("selectRemove").disabled = blocked || !S.selected.size;
     $("selectRemove").textContent = S.selected.size ? `Remove ${fmt(S.selected.size)}` : "Remove";
     $("selectAll").disabled = blocked;
+    $("coverBtn").disabled = blocked || S.selecting;
     $("grid").classList.toggle("locked", blocked);
     if (S.sortable) S.sortable.option("disabled", S.selecting || blocked);
 
@@ -1658,6 +1820,9 @@
       moveInView(src, n - 1);
     };
     $("sheetRemove").onclick = () => { const src = sheetSrc; closeDialog($("photoSheet")); removePhotos([src]); };
+    $("sheetCover").onclick = () => { const src = sheetSrc; closeDialog($("photoSheet")); chooseCover(src); };
+    $("coverBtn").onclick = openCoverPicker;
+    $("coverDialog").addEventListener("click", (e) => { if (e.target === $("coverDialog")) $("coverCancel").click(); });
     $("sheetClose").onclick = () => closeDialog($("photoSheet"));
     $("photoSheet").addEventListener("click", (e) => { if (e.target === $("photoSheet")) closeDialog($("photoSheet")); });
 

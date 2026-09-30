@@ -17,7 +17,7 @@ import { createGitHub } from "../../src/lib/admin/github.mjs";
 import { createContentEngine } from "../../src/lib/admin/content.mjs";
 import { createAuth } from "../../src/lib/admin/auth.mjs";
 import { createHandler } from "../../src/lib/admin/handler.mjs";
-import { GALLERY_SLUGS, mergeGallery } from "../../src/lib/gallery-model.mjs";
+import { GALLERY_SLUGS, ORIGINAL_COVERS, mergeGallery, resolveCover } from "../../src/lib/gallery-model.mjs";
 
 const PORT = Number(process.argv[2] || 4400);
 const ROOT = process.env.PUBLIC_ROOT || new URL("../../public/", import.meta.url).pathname;
@@ -45,6 +45,8 @@ for (let i = 1; i <= (process.env.REAL_PHOTOS ? 0 : 8); i++) {
   baseball.push({ src: `/galleries/baseball/TEST-${i}.webp`, alt: "" });
 }
 if (baseball.length) files["src/data/galleries/baseball.json"] = JSON.stringify({ images: baseball }, null, 2) + "\n";
+// Like production, the album starts on its original designed cover (public/covers/).
+if (baseball.length) files["public/covers/baseball.jpg"] = await sharp(await labeled("C", { width: 1050, height: 1400, hue: 280 })).jpeg().toBuffer();
 for (let i = 1; i <= (process.env.REAL_PHOTOS ? 0 : 3); i++) files[`public/galleries/soccer/S-${i}.webp`] = await labeled(i + 20);
 // A long gallery (like basketball's 54) for scrolling / performance checks.
 const LONG = process.env.REAL_PHOTOS ? 0 : Number(process.env.LONG_GALLERY || 60);
@@ -65,6 +67,7 @@ if (process.env.REAL_PHOTOS) {
     if (existsSync(json)) files[json] = readFileSync(json, "utf8");
   }
   files["src/data/stats.json"] = readFileSync("src/data/stats.json", "utf8");
+  for (const name of readdirSync("public/covers")) files[`public/covers/${name}`] = readFileSync(`public/covers/${name}`);
 }
 const initial = fake.seed("main", files);
 fake.refs.set("staging", initial);
@@ -95,6 +98,19 @@ const SPORTS = ["basketball", "football", "soccer", "baseball", "softball", "hoc
 // so the admin's "Verifying live site" step checks something real.
 function livePage(pathname) {
   const content = fake.files(deploy.live);
+  const albumImages = (slug) => {
+    const json = content[`src/data/galleries/${slug}.json`];
+    const data = json ? JSON.parse(json) : {};
+    const disk = Object.keys(content).filter((p) => p.startsWith(`public/galleries/${slug}/`)).map((p) => p.slice(6));
+    return { data, images: mergeGallery(data.images || [], disk).images };
+  };
+  // Category tiles, with covers resolved by the same rule as src/lib/galleries.ts.
+  const tiles = (slugs) => slugs.map((slug) => {
+    const { data, images } = albumImages(slug);
+    const { src } = resolveCover({ cover: data.cover, images, original: ORIGINAL_COVERS[slug]?.src, exists: (p) => !!content["public" + p] });
+    return src ? `<img src="${src}" alt="${slug}" />` : `<div class="placeholder"></div>`;
+  }).join("");
+  if (pathname === "/work/sports/") return `<!doctype html><title>sports</title>${tiles(SPORTS)}`;
   const m = pathname.match(/^\/work\/(?:sports\/)?([a-z]+)\/$/);
   if (m && GALLERY_SLUGS.includes(m[1]) && (SPORTS.includes(m[1]) === pathname.startsWith("/work/sports/"))) {
     const slug = m[1];
@@ -106,7 +122,7 @@ function livePage(pathname) {
   }
   if (pathname === "/") {
     const stats = JSON.parse(content["src/data/stats.json"]);
-    return `<!doctype html><title>home</title><span data-photo-count data-to="${stats.photosTaken}">${Number(stats.photosTaken).toLocaleString("en-US")}</span>`;
+    return `<!doctype html><title>home</title>${tiles(GALLERY_SLUGS.filter((s) => !SPORTS.includes(s)))}<span data-photo-count data-to="${stats.photosTaken}">${Number(stats.photosTaken).toLocaleString("en-US")}</span>`;
   }
   return null;
 }

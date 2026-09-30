@@ -552,6 +552,105 @@ await step("milestone: crossing 75,000 celebrates once, only after it's live", a
   assert.match(await text("#msText"), /24,981 more until 100,000/);
 });
 
+const coverTile = () => page.$$eval("#grid .tile", (ts) => ts.filter((t) => !t.querySelector(".cover-tag").hidden).map((t) => t.dataset.src));
+
+await step("cover: gallery shows its original cover; picker marks it; choosing a photo moves the Cover tag", async () => {
+  await openGallery("baseball");
+  await page.waitForSelector("#coverBlock:not([hidden])");
+  await page.waitForSelector("#coverBtn:not([hidden])");
+  const order = await tiles();
+  assert.deepEqual(await coverTile(), [], "the original cover isn't one of these photos");
+  assert.match(await text("#coverText"), /original cover/);
+  await tap("#coverBtn");
+  await page.waitForSelector("#coverDialog[open]");
+  assert.equal(await page.locator("#coverPicker .pick").count(), order.length + 1, "original + every photo");
+  assert.equal(await page.locator('#coverPicker .pick[aria-pressed="true"]').getAttribute("aria-label"), "Original cover, current cover");
+  assert.ok(await page.isDisabled("#coverOk"), "nothing to save until a different one is picked");
+  await page.waitForTimeout(400);
+  await shot("18-cover-picker");
+  await page.locator("#coverPicker .pick").nth(3).click();
+  assert.equal(await page.locator('#coverPicker .pick[aria-pressed="true"]').getAttribute("data-key"), order[2]);
+  assert.ok(!(await page.isDisabled("#coverOk")));
+  await tap("#coverOk");
+  await waitIdle();
+  await waitText("#toastText", /Cover updated/);
+  assert.deepEqual(await coverTile(), [order[2]]);
+  assert.match(await text("#coverText"), /^Photo 3 is what people see for Baseball/);
+  assert.match(await text("#coverNote"), /after you publish/);
+  assert.ok(await page.$eval("#coverImg", (i, src) => decodeURIComponent(i.src).endsWith(src), order[2]), "preview shows the new cover");
+  await page.evaluate(() => window.scrollTo(0, 0));
+  await page.waitForTimeout(300);
+  await shot("19-cover-chosen");
+});
+
+await step("cover: Undo puts the original back; the photo menu can set a cover too", async () => {
+  const order = await tiles();
+  await tap("#toastAction");
+  await waitIdle();
+  await waitText("#toastText", /Cover change undone/);
+  assert.deepEqual(await coverTile(), []);
+  assert.match(await text("#coverText"), /original cover/);
+  await tapTile(3);
+  await page.waitForSelector("#photoSheet[open]");
+  assert.equal(await text("#sheetCover"), "Use as cover");
+  await tap("#sheetCover");
+  await waitIdle();
+  assert.deepEqual(await coverTile(), [order[3]]);
+  await tapTile(3);
+  await page.waitForSelector("#photoSheet[open]");
+  assert.equal(await text("#sheetCover"), "This is the cover");
+  assert.ok(await page.isDisabled("#sheetCover"));
+  await tap("#sheetClose");
+});
+
+await step("accessibility: cover picker has no WCAG A/AA violations", async () => {
+  await tap("#coverBtn");
+  await page.waitForSelector("#coverDialog[open]");
+  try { return await axe("cover picker"); } finally { await tap("#coverCancel"); }
+});
+
+await step("cover: removing the cover photo falls back to the first photo with a clear note; Undo restores it", async () => {
+  const order = await tiles();
+  const cover = (await coverTile())[0];
+  await tapTile(order.indexOf(cover));
+  await page.waitForSelector("#photoSheet[open]");
+  await tap("#sheetRemove");
+  await page.waitForSelector("#confirmDialog[open]");
+  await tap("#confirmOk");
+  await waitIdle();
+  const after = await tiles();
+  assert.deepEqual(await coverTile(), [after[0]], "first photo stands in");
+  assert.match(await text("#coverNote"), /was removed/);
+  await shot("20-cover-removed");
+  await tap("#toastAction");
+  await waitIdle();
+  await waitText("#toastText", /put back/);
+  assert.deepEqual(await coverTile(), [cover], "undo brings the chosen cover back");
+});
+
+await step("cover: review says New cover; publish verifies the live tile shows it", async () => {
+  const cover = (await coverTile())[0];
+  await goHome();
+  await waitText("#reviewList", /New cover/);
+  const tileSrc = await page.$eval('a[href="#/gallery/baseball"] img.cover', (i) => decodeURIComponent(i.src));
+  assert.ok(tileSrc.endsWith(cover), "dashboard tile shows the new cover");
+  await tap("#publishBtn");
+  await page.waitForSelector("#confirmDialog[open]");
+  assert.match(await text("#confirmBody"), /New cover/);
+  await tap("#confirmOk");
+  await waitText("#pubTitle", /^Published ✓$/, 60000);
+  const live = await (await fetch(`${BASE}/work/sports/`)).text();
+  assert.ok(live.includes(`src="${cover}"`), "live Sports page shows the chosen cover");
+});
+
+await step("cover: an empty gallery explains itself and offers no picker", async () => {
+  await openGallery("track");
+  await page.waitForSelector("#coverBlock:not([hidden])");
+  assert.match(await text("#coverText"), /Add photos to choose a cover/);
+  assert.ok(await page.isHidden("#coverBtn"));
+  await goHome();
+});
+
 await step("keyboard: focus a photo, Enter opens options, Escape closes", async () => {
   if (isTouch) return "SKIP";
   await openGallery("baseball");

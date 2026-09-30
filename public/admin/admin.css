@@ -325,6 +325,12 @@ input:focus { border-color: var(--accent); }
   text-shadow: 0 1px 6px rgba(0,0,0,.75); display: flex; align-items: center; gap: 5px;
 }
 .tile .badge::before { content: ""; width: 5px; height: 5px; border-radius: 50%; background: var(--accent-bright); }
+.tile .cover-tag {
+  position: absolute; top: 7px; right: 7px; padding: 4px 9px; border-radius: 9999px;
+  background: rgba(19,19,22,.62); -webkit-backdrop-filter: blur(4px); backdrop-filter: blur(4px);
+  color: #fff; font: 500 9.5px var(--body); letter-spacing: .16em; text-transform: uppercase;
+}
+.grid.selecting .tile .cover-tag { display: none; }
 .tile .tick { position: absolute; top: 7px; right: 7px; width: 24px; height: 24px; border-radius: 50%; border: 1.5px solid rgba(255,255,255,.9); background: rgba(19,19,22,.3); display: none; }
 .grid.selecting .tile { cursor: pointer; }
 .grid.selecting .tile .tick { display: block; }
@@ -335,6 +341,26 @@ input:focus { border-color: var(--accent); }
 .tile.sortable-chosen { border-color: var(--accent); box-shadow: 0 14px 34px rgba(19,19,22,.22); }
 .tile.broken::after { content: "Preview unavailable"; position: absolute; inset: 0; display: grid; place-items: center; font-size: 11px; color: var(--fog); text-align: center; padding: 8px; }
 .empty { color: var(--fog); padding: 44px 0 10px; max-width: 44ch; }
+
+/* album cover: a small copy of the public category tile, so Jacob sees the crop the site uses */
+.cover-block { display: flex; align-items: center; gap: 20px; padding: 0 0 26px; margin-bottom: 22px; border-bottom: 1px solid var(--line); }
+.cover-preview {
+  position: relative; flex: none; width: 112px; aspect-ratio: 4 / 5; overflow: hidden; border-radius: 16px;
+  border: 1px solid var(--line); background: var(--panel);
+}
+@media (min-width: 640px) { .cover-preview { width: 140px; } }
+.cover-preview img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.cover-preview .scrim { position: absolute; inset: 0; background: linear-gradient(to top, rgba(0,0,0,.85), rgba(0,0,0,.2) 45%, transparent); }
+.cover-preview.is-empty .scrim { display: none; }
+.cover-name { position: absolute; inset: auto 0 0 0; padding: 10px 12px; color: #fff; font: 500 15px var(--display); letter-spacing: -0.01em; }
+.cover-preview.is-empty .cover-name { color: var(--fog); }
+.cover-copy { min-width: 0; }
+.cover-copy .eyebrow { margin-bottom: 10px; }
+.cover-text { font-size: 14.5px; max-width: 46ch; }
+.cover-note { margin-top: 6px; font-size: 13.5px; color: var(--fog); max-width: 46ch; }
+.cover-note.warn { color: var(--warn); }
+.cover-note.pending { color: var(--accent); }
+.cover-copy .btn { margin-top: 14px; }
 
 /* upload + removed panels: hairline blocks, not raised cards */
 .upload-panel { border-top: 1px solid var(--line); padding: 20px 0 4px; margin-top: 18px; }
@@ -396,6 +422,28 @@ dialog::backdrop { background: rgba(19,19,22,.55); -webkit-backdrop-filter: blur
 .moveto-row { display: flex; gap: 10px; }
 .moveto-row input { flex: 1; font-variant-numeric: tabular-nums; }
 .sheet .btn.block { margin-top: 10px; }
+/* cover picker: the album's photos cropped like the public tile */
+.modal.picker { width: min(720px, calc(100% - 24px)); }
+.cover-picker {
+  display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-top: 16px;
+  max-height: min(52vh, 560px); overflow-y: auto; -webkit-overflow-scrolling: touch; padding: 3px;
+}
+@media (min-width: 600px) { .cover-picker { grid-template-columns: repeat(4, 1fr); gap: 12px; } }
+.pick {
+  position: relative; aspect-ratio: 4 / 5; overflow: hidden; border-radius: 14px; padding: 0; cursor: pointer;
+  border: 1px solid var(--line); background: var(--panel); -webkit-tap-highlight-color: transparent; transition: border-color .3s;
+}
+.pick img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.pick:hover { border-color: color-mix(in srgb, var(--accent) 40%, transparent); }
+.pick .num, .pick .label {
+  position: absolute; left: 8px; color: #fff; font: 500 11px var(--body); letter-spacing: .06em; text-shadow: 0 1px 6px rgba(0,0,0,.65);
+}
+.pick .num { top: 8px; font-variant-numeric: tabular-nums; }
+.pick .label { bottom: 8px; font-size: 9.5px; letter-spacing: .16em; text-transform: uppercase; text-shadow: 0 1px 6px rgba(0,0,0,.75); }
+.pick .tick { position: absolute; top: 7px; right: 7px; width: 24px; height: 24px; border-radius: 50%; border: 1.5px solid rgba(255,255,255,.9); background: rgba(19,19,22,.3); }
+.pick[aria-pressed="true"] { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent); }
+.pick[aria-pressed="true"] .tick { background: var(--accent) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M4 8.2l2.6 2.6L12 5.4' fill='none' stroke='white' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center/15px no-repeat; border-color: #fff; }
+#coverTitle:focus { outline: none; }
 #gTitle:focus, #confirmTitle:focus, #publishCard:focus { outline: none; }
 
 @media (prefers-reduced-motion: reduce) {
