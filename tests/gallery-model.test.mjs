@@ -2,7 +2,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync, readdirSync, existsSync } from "node:fs";
-import { GALLERY_SLUGS, mergeGallery, movedCount, isContentPath } from "../src/lib/gallery-model.mjs";
+import { GALLERY_SLUGS, ORIGINAL_COVERS, mergeGallery, movedCount, isContentPath, resolveCover } from "../src/lib/gallery-model.mjs";
 import { validateImage, safeStem } from "../src/lib/admin/images.mjs";
 import { makeImage } from "./helpers/site.mjs";
 
@@ -50,6 +50,48 @@ test("REAL repo: every gallery still resolves to the same photos (read-only)", (
     const r = mergeGallery(data.images, files);
     assert.equal(r.images.length, expected[slug] || 0, slug);
     assert.deepEqual(r.missing, [], `${slug} has no broken entries`);
+  }
+});
+
+test("resolveCover: chosen photo, designed cover, fallbacks, never a missing file", () => {
+  const images = [{ src: "/galleries/x/a.jpg" }, { src: "/galleries/x/b.jpg" }];
+  const has = (...paths) => (src) => paths.includes(src);
+  const r = (a) => resolveCover({ images, original: "/covers/x.jpg", exists: has("/covers/x.jpg"), ...a });
+  assert.deepEqual(r({ cover: "/galleries/x/b.jpg" }), { src: "/galleries/x/b.jpg", kind: "chosen", stale: false });
+  assert.deepEqual(r({ cover: "/Galleries/X/B.JPG" }), { src: "/galleries/x/b.jpg", kind: "chosen", stale: false }, "same loose match as the photo list");
+  assert.deepEqual(r({}), { src: "/covers/x.jpg", kind: "original", stale: false }, "legacy: no choice yet");
+  assert.deepEqual(r({ cover: "/covers/x.jpg" }), { src: "/covers/x.jpg", kind: "original", stale: false });
+  assert.deepEqual(r({ cover: "/galleries/x/gone.jpg" }), { src: "/galleries/x/a.jpg", kind: "first", stale: true }, "chosen photo removed");
+  assert.deepEqual(r({ cover: "/covers/missing.jpg" }), { src: "/galleries/x/a.jpg", kind: "first", stale: true });
+  assert.deepEqual(r({ cover: "/galleries/other/a.jpg" }), { src: "/galleries/x/a.jpg", kind: "first", stale: true }, "another album's photo");
+  assert.deepEqual(r({ exists: has() }), { src: "/galleries/x/a.jpg", kind: "first", stale: false }, "original file gone");
+  assert.deepEqual(r({ images: [], cover: "/galleries/x/gone.jpg" }), { src: "/covers/x.jpg", kind: "original", stale: true }, "empty album");
+  assert.deepEqual(r({ images: [], exists: has() }), { src: null, kind: "none", stale: false }, "nothing at all: placeholder");
+  assert.deepEqual(resolveCover({ images: [{ src: "/galleries/x/only.jpg" }] }), { src: "/galleries/x/only.jpg", kind: "first", stale: false }, "one photo");
+});
+
+test("original covers match the site's categories and the files in public/covers", () => {
+  const cats = readFileSync("src/data/categories.ts", "utf8");
+  for (const slug of GALLERY_SLUGS) {
+    const m = cats.match(new RegExp(`slug: "${slug}"[^}]*?cover: "([^"]+)"`, "s"));
+    assert.ok(m, `${slug} has a cover in categories.ts`);
+    assert.equal(ORIGINAL_COVERS[slug]?.src, m[1], slug);
+    assert.ok(existsSync(`public${m[1]}`), `${m[1]} exists`);
+  }
+});
+
+test("REAL repo: adding cover management changes no cover on the site (read-only)", () => {
+  const cats = readFileSync("src/data/categories.ts", "utf8");
+  for (const slug of GALLERY_SLUGS) {
+    const data = JSON.parse(readFileSync(`src/data/galleries/${slug}.json`, "utf8"));
+    const dir = `public/galleries/${slug}`;
+    const files = existsSync(dir) ? readdirSync(dir).map((n) => `/galleries/${slug}/${n}`) : [];
+    const { images } = mergeGallery(data.images, files);
+    const original = cats.match(new RegExp(`slug: "${slug}"[^}]*?cover: "([^"]+)"`, "s"))[1];
+    const oldRule = data.cover || original; // what the site did before this feature
+    const { src } = resolveCover({ cover: data.cover, images, original, exists: (p) => existsSync(`public${p}`) });
+    assert.ok(src && existsSync(`public${src}`), `${slug} cover file exists`);
+    if (existsSync(`public${oldRule}`)) assert.equal(src, oldRule, `${slug} cover unchanged`);
   }
 });
 

@@ -10,6 +10,7 @@
 //   remove           { gallery, srcs: [src] }        -> removed (with sha + position for undo)
 //   restore          { gallery, items: [{ src, sha?, index? }] }
 //   reorder          { gallery, order: [src] }
+//   cover            { gallery, src, undo? }         -> the album's cover (src: a photo in it, or its original cover)
 //   moments-add      { amount }
 //   moments-set      { value, expected }
 //   discard          { gallery? }
@@ -140,6 +141,15 @@ export function createHandler({ auth, engine, gh, fetchLiveCommit, prodBranch = 
       }
       const slug = gallerySlug(gallery);
       return withSnapshot(await engine.reorder(slug, order, hints(req)), slug);
+    },
+
+    async cover(req) {
+      const { gallery, src, undo } = await readJsonBody(req);
+      if (!(typeof src === "string" && src.length <= 300) && !(undo === true && src === null)) {
+        throw new ContentError("bad_cover", "Pick a photo for the cover.");
+      }
+      const slug = gallerySlug(gallery);
+      return withSnapshot(await engine.setCover(slug, src, { undo: undo === true }, hints(req)), slug);
     },
 
     async "moments-add"(req) {

@@ -12,3 +12,10 @@ export declare function mergeGallery(
   fileSrcs: string[]
 ): { images: Array<{ src: string; alt: string }>; missing: string[]; extras: string[] };
 export declare function movedCount(beforeSrcs: string[], afterSrcs: string[]): number;
+export declare const ORIGINAL_COVERS: Record<string, { src: string; photo: string | null }>;
+export declare function resolveCover(a: {
+  cover?: string;
+  images: Array<{ src: string }>;
+  original?: string | null;
+  exists?: (src: string) => boolean;
+}): { src: string | null; kind: "chosen" | "original" | "first" | "none"; stale: boolean };

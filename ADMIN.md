@@ -7,10 +7,12 @@ photos, update Moments Captured, then **Publish changes**. No GitHub, no JSON.
 - **Dashboard** (`/admin`): Moments Captured with progress to the next milestone
   (75k, 100k, 150k, 250k, 500k, 750k, 1M), portfolio photo count, galleries with photos,
   last publish (derived from git history), every gallery with its count, and the Publish card.
-- **Gallery** (`/admin#/gallery/<slug>`): thumbnails in order with position numbers,
+- **Gallery** (`/admin#/gallery/<slug>`): the album's **Cover** (a small copy of the public tile,
+  cropped the same way) with **Change cover**, then thumbnails in order with position numbers,
   Add photos (or drop files on desktop), drag or tap-menu reordering (Move earlier/later,
   start/end, or to a position number), Select mode for removing several photos at once,
   Undo after removing, and a "Removed, not published yet" strip to put photos back.
+  The cover photo wears a "Cover" tag; tapping any photo also offers **Use as cover**.
 - **Status pill** (top right) always says one of: Uploading / Saving / Order not saved /
   Not published yet / Updating website / Verifying live site / Published ✓ /
   Website not updated yet / All changes live. Tapping it jumps to Publish.
@@ -20,6 +22,32 @@ photos, update Moments Captured, then **Publish changes**. No GitHub, no JSON.
   the homepage and checks the photo counts and the Moments Captured number). Only then "Published ✓".
 - A milestone crossed by a publish gets a one-time aperture animation after it's verified live.
 
+## Album covers
+
+The cover is the image on the album's category tile (homepage / Photo & Video for Portraits,
+Landscape, Cars, Graphics; `/work/sports/` for the seven sports). Jacob picks it in /admin from the
+photos already in that album. It is saved as the album JSON's `cover` field, holding the photo's
+path (e.g. `"/galleries/football/5N1A1126-bc6d8d8b.jpg"`), never a position in the list. Uploads,
+reordering and removing other photos don't touch it. Like everything else it's a draft until
+**Publish** ("New cover" in the review), and publishing checks the live tile shows it.
+
+One rule decides the cover, shared by the site build and /admin (`resolveCover` in
+`src/lib/gallery-model.mjs`), so /admin always shows what the site will show:
+
+1. `cover` names a photo that is in the album right now: that photo.
+2. `cover` names a designed cover in `public/covers/` that exists: that image.
+3. No `cover` at all (legacy albums): the album's original designed cover
+   (`ORIGINAL_COVERS`, same paths as `src/data/categories.ts`), if the file exists.
+4. Otherwise, e.g. the chosen photo was removed: **the first photo in the album's current order.**
+   /admin says "The photo you chose as the cover was removed" and Undo / Put back restores it
+   (the `cover` field is kept, so the photo becomes the cover again if it comes back).
+5. No photos at all: the original designed cover if it exists, else no image (the site's placeholder tile).
+
+A cover file that doesn't exist is never rendered. Nothing was migrated: albums without a `cover`
+keep their original designed covers until Jacob picks a photo. Basketball's original cover isn't one
+of its album photos, so its picker also offers "Original"; for the others /admin tags the album photo
+the original was cut from. The Sports group tile (`sports.json`) isn't an album and isn't editable.
+
 ## Architecture (one writer, one pipeline)
 
 ```
@@ -28,7 +56,7 @@ Browser (/admin)                     Netlify Function /api/admin              Gi
 resize to <=2000px, JPEG/WebP  --->  check REAL bytes (format, size, px)  --> blob
                                      signed receipt
 "Save to gallery" / remove /   --->  ONE atomic commit on `staging`       --> staging (Jacob's draft)
-reorder / Moments Captured           (compare-and-swap, retried on races)
+reorder / cover / Moments Captured   (compare-and-swap, retried on races)
                                      answers with fresh state (1 round trip)
 "Publish changes"              --->  ONE commit on `main` applying every  --> main --> Netlify build
                                      content difference (+ levels staging)

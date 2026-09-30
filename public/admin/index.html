@@ -12,7 +12,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <!-- same families the portfolio loads (src/styles/global.css) -->
   <link href="https://fonts.googleapis.com/css2?family=Inter+Tight:wght@400;500;600;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/admin/admin.css?v=4" />
+  <link rel="stylesheet" href="/admin/admin.css?v=5" />
 </head>
 <body>
   <header class="topbar" data-nav>
@@ -140,6 +140,20 @@
         <p class="count-line" id="gCount"></p>
       </div>
 
+      <section class="cover-block" id="coverBlock" aria-labelledby="coverLabel" hidden>
+        <div class="cover-preview" id="coverPreview" aria-hidden="true">
+          <img id="coverImg" alt="" />
+          <span class="scrim"></span>
+          <span class="cover-name" id="coverName"></span>
+        </div>
+        <div class="cover-copy">
+          <p class="eyebrow" id="coverLabel">Cover</p>
+          <p class="cover-text" id="coverText"></p>
+          <p class="cover-note" id="coverNote" hidden></p>
+          <button class="btn small" id="coverBtn" type="button">Change cover</button>
+        </div>
+      </section>
+
       <section class="dropzone" id="photosCard" aria-labelledby="gTitle">
         <div class="toolbar">
           <button class="btn primary" id="addBtn" type="button">Add photos</button>
@@ -226,8 +240,19 @@
         <button class="btn" type="submit">Move</button>
       </div>
     </form>
+    <button class="btn block" id="sheetCover" type="button">Use as cover</button>
     <button class="btn danger block" id="sheetRemove" type="button">Remove from gallery…</button>
     <button class="btn quiet block" id="sheetClose" type="button">Close</button>
+  </dialog>
+
+  <dialog id="coverDialog" class="modal picker" aria-labelledby="coverTitle">
+    <h3 id="coverTitle" tabindex="-1">Choose a cover</h3>
+    <p class="confirm-text" id="coverHelp"></p>
+    <div class="cover-picker" id="coverPicker" role="group" aria-labelledby="coverTitle"></div>
+    <div class="modal-actions">
+      <button class="btn quiet" id="coverCancel" type="button">Cancel</button>
+      <button class="btn primary" id="coverOk" type="button" disabled>Use as cover</button>
+    </div>
   </dialog>
 
   <dialog id="confirmDialog" class="modal" aria-labelledby="confirmTitle">
@@ -262,6 +287,6 @@
   </dialog>
 
   <script src="/admin/vendor/Sortable.min.js?v=1.15.7"></script>
-  <script src="/admin/admin.js?v=4"></script>
+  <script src="/admin/admin.js?v=5"></script>
 </body>
 </html>

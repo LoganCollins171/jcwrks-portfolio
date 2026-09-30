@@ -205,7 +205,8 @@ test("reorder: saved explicitly, reload shows it, publish keeps it, stats untouc
   assert.deepEqual(g.body.photos.map((p) => p.src), want);
   assert.equal(g.body.photos.find((p) => p.name === "a.webp").alt, "slide", "captions travel with photos");
   const s = await state(site, token);
-  assert.deepEqual(s.changes.lines, ["Baseball: 1 photo moved"]);
+  // This test repo has no designed covers, so the cover is the first photo and moves with it.
+  assert.deepEqual(s.changes.lines, ["Baseball: 1 photo moved, new cover"]);
   assert.equal(s.stats.draft, 68527);
   const p = await site.call("publish", { draftSha: s.draftSha }, { token });
   assert.equal(p.body.published, true);
@@ -234,7 +235,7 @@ test("delete + reorder together, then publish", async () => {
   await site.call("remove", { gallery: "baseball", src: "/galleries/baseball/c.webp" }, { token });
   await site.call("reorder", { gallery: "baseball", order: ["/galleries/baseball/b.webp", "/galleries/baseball/a.webp"] }, { token });
   const s = await state(site, token);
-  assert.deepEqual(s.changes.lines, ["Baseball: 1 photo removed, 1 photo moved"]);
+  assert.deepEqual(s.changes.lines, ["Baseball: 1 photo removed, 1 photo moved, new cover"]);
   await site.call("publish", { draftSha: s.draftSha }, { token });
   assert.deepEqual(order(site, "main", "baseball"), ["/galleries/baseball/b.webp", "/galleries/baseball/a.webp"]);
   assert.equal(site.fake.files("main")["public/galleries/baseball/c.webp"], undefined);
@@ -276,7 +277,7 @@ test("upload then add the uploaded count to Moments Captured (explicit second st
   assert.equal(site.json("staging", "src/data/stats.json").photosTaken, 68527, "uploading alone never changes the total");
   await site.call("moments-add", { amount: r.body.added.length }, { token });
   const s = await state(site, token);
-  assert.deepEqual(s.changes.lines, ["Hockey: 4 photos added", "Moments Captured: 68,527 → 68,531 (+4)"]);
+  assert.deepEqual(s.changes.lines, ["Hockey: 4 photos added, new cover", "Moments Captured: 68,527 → 68,531 (+4)"]);
 });
 
 // ---------------- pending detection ----------------
@@ -294,7 +295,7 @@ test("pending: deleted-only change is detected", async () => {
   await site.call("remove", { gallery: "portraits", src: "/galleries/portraits/p1.jpg" }, { token });
   const s = await state(site, token);
   assert.equal(s.changes.hasChanges, true);
-  assert.deepEqual(s.changes.lines, ["Portraits: 1 photo removed"]);
+  assert.deepEqual(s.changes.lines, ["Portraits: 1 photo removed, new cover"]);
 });
 
 test("pending: modified-only change (the stranded Sept 16 shrink commit) is detected and publishable", async () => {
@@ -697,4 +698,158 @@ test("undo after a reorder puts live photos back at their draft position, not th
   const r = await site.call("remove", { gallery: "baseball", srcs: ["/galleries/baseball/b.webp", "/galleries/baseball/a.webp"] }, { token });
   await site.call("restore", { gallery: "baseball", items: r.body.removed.map(({ src, sha, index }) => ({ src, sha, index })) }, { token });
   assert.deepEqual(order(site, "staging", "baseball"), before);
+});
+
+// ---------------- album covers ----------------
+
+const coverField = (site, branch, slug) => site.json(branch, `src/data/galleries/${slug}.json`).cover;
+const gallery = (site, token, slug) => site.call("gallery", { gallery: slug }, { token }).then((r) => r.body);
+
+test("cover: an album with no choice shows its first photo; picking one saves a stable reference, photos untouched", async () => {
+  const site = await createTestSite();
+  const token = await site.login();
+  const g0 = await gallery(site, token, "baseball");
+  assert.equal(g0.cover.photo, "/galleries/baseball/c.webp");
+  assert.equal(g0.cover.kind, "first");
+  const before = site.json("staging", "src/data/galleries/baseball.json").images;
+
+  const r = await site.call("cover", { gallery: "baseball", src: "/galleries/baseball/b.webp" }, { token });
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  assert.equal(r.body.cover, "/galleries/baseball/b.webp");
+  assert.equal(r.body.previous, null);
+  assert.equal(coverField(site, "staging", "baseball"), "/galleries/baseball/b.webp");
+  assert.deepEqual(site.json("staging", "src/data/galleries/baseball.json").images, before, "photo list and order unchanged");
+  assert.equal(r.body.snapshot.gallery.cover.photo, "/galleries/baseball/b.webp");
+  assert.equal(r.body.snapshot.gallery.cover.kind, "chosen");
+  assert.ok(r.body.snapshot.state.galleries.find((g) => g.slug === "baseball").cover.url.includes("b.webp"), "dashboard tile shows the cover");
+
+  const s = await state(site, token);
+  const change = s.changes.galleries.find((g) => g.slug === "baseball");
+  assert.equal(change.coverChanged, true);
+  assert.equal(change.housekeeping, false);
+  assert.equal(change.draftCover, "/galleries/baseball/b.webp");
+  assert.ok(s.changes.lines.includes("Baseball: new cover"), s.changes.lines.join(" | "));
+  assert.equal(coverField(site, "main", "baseball"), undefined, "not live until publish");
+
+  const p = await site.call("publish", { draftSha: s.draftSha }, { token });
+  assert.equal(p.status, 200);
+  assert.equal(coverField(site, "main", "baseball"), "/galleries/baseball/b.webp");
+});
+
+test("cover: reordering or adding photos never changes a chosen cover", async () => {
+  const site = await createTestSite();
+  const token = await site.login();
+  await site.call("cover", { gallery: "baseball", src: "/galleries/baseball/a.webp" }, { token });
+  await site.call("reorder", { gallery: "baseball", order: ["/galleries/baseball/b.webp", "/galleries/baseball/a.webp", "/galleries/baseball/c.webp"] }, { token });
+  const add = await uploadAndAdd(site, token, "baseball", [{ buf: await makeImage(), name: "new.jpg" }]);
+  assert.equal(add.status, 200);
+  assert.equal(coverField(site, "staging", "baseball"), "/galleries/baseball/a.webp");
+  assert.equal((await gallery(site, token, "baseball")).cover.photo, "/galleries/baseball/a.webp");
+});
+
+test("cover: removing the cover photo falls back to the first photo; Undo brings the cover back", async () => {
+  const site = await createTestSite();
+  const token = await site.login();
+  await site.call("cover", { gallery: "baseball", src: "/galleries/baseball/a.webp" }, { token });
+  const r = await site.call("remove", { gallery: "baseball", srcs: ["/galleries/baseball/a.webp"] }, { token });
+  const g = r.body.snapshot.gallery;
+  assert.equal(g.cover.photo, "/galleries/baseball/c.webp", "first photo stands in");
+  assert.equal(g.cover.kind, "first");
+  assert.equal(g.cover.stale, true, "admin can say the chosen cover was removed");
+  await site.call("restore", { gallery: "baseball", items: r.body.removed.map(({ src, sha, index }) => ({ src, sha, index })) }, { token });
+  const back = await gallery(site, token, "baseball");
+  assert.equal(back.cover.photo, "/galleries/baseball/a.webp");
+  assert.equal(back.cover.kind, "chosen");
+});
+
+test("cover: removing every photo leaves no cover (site shows its placeholder), and a new upload becomes the stand-in", async () => {
+  const site = await createTestSite();
+  const token = await site.login();
+  await site.call("cover", { gallery: "baseball", src: "/galleries/baseball/b.webp" }, { token });
+  const all = (await gallery(site, token, "baseball")).photos.map((p) => p.src);
+  const r = await site.call("remove", { gallery: "baseball", srcs: all }, { token });
+  assert.equal(r.body.snapshot.gallery.cover, null);
+  assert.equal(r.body.snapshot.state.galleries.find((g) => g.slug === "baseball").cover, null);
+  await uploadAndAdd(site, token, "baseball", [{ buf: await makeImage(), name: "fresh.jpg" }]);
+  const g = await gallery(site, token, "baseball");
+  assert.equal(g.cover.photo, g.photos[0].src);
+  assert.equal(g.cover.stale, true);
+});
+
+test("cover: an album with one photo, and an empty album", async () => {
+  const site = await createTestSite();
+  const token = await site.login();
+  const p = await gallery(site, token, "portraits");
+  assert.equal(p.photos.length, 1);
+  assert.equal(p.cover.photo, "/galleries/portraits/p1.jpg");
+  assert.equal((await site.call("cover", { gallery: "portraits", src: "/galleries/portraits/p1.jpg" }, { token })).status, 200);
+  const t = await gallery(site, token, "track");
+  assert.equal(t.cover, null);
+  const bad = await site.call("cover", { gallery: "track", src: "/galleries/track/x.jpg" }, { token });
+  assert.equal(bad.status, 409);
+  assert.equal(bad.body.error.code, "not_in_gallery");
+});
+
+test("cover: only this album's photos (or its original cover) are accepted", async () => {
+  const site = await createTestSite();
+  const token = await site.login();
+  const tries = [
+    { gallery: "baseball", src: "/galleries/soccer/IMG_2.webp" },
+    { gallery: "baseball", src: "/galleries/baseball/gone.webp" },
+    { gallery: "baseball", src: "https://evil.test/x.jpg" },
+    { gallery: "baseball", src: "/covers/soccer.jpg" },
+    { gallery: "baseball", src: "/covers/baseball.jpg" }, // original cover file doesn't exist in this repo
+  ];
+  for (const body of tries) assert.equal((await site.call("cover", body, { token })).body.error.code, "not_in_gallery", body.src);
+  assert.equal((await site.call("cover", { gallery: "baseball", src: 42 }, { token })).body.error.code, "bad_cover");
+  assert.equal((await site.call("cover", { gallery: "baseball", src: null }, { token })).body.error.code, "bad_cover", "null only for undo");
+  assert.equal((await site.call("cover", { gallery: "nope", src: "/galleries/nope/a.jpg" }, { token })).body.error.code, "bad_gallery");
+  assert.equal(coverField(site, "staging", "baseball"), undefined);
+});
+
+test("cover: undo puts the exact earlier setting back, including none", async () => {
+  const site = await createTestSite();
+  const token = await site.login();
+  const first = await site.call("cover", { gallery: "baseball", src: "/galleries/baseball/b.webp" }, { token });
+  const second = await site.call("cover", { gallery: "baseball", src: "/galleries/baseball/a.webp" }, { token });
+  assert.equal(second.body.previous, "/galleries/baseball/b.webp");
+  await site.call("cover", { gallery: "baseball", src: second.body.previous, undo: true }, { token });
+  assert.equal(coverField(site, "staging", "baseball"), "/galleries/baseball/b.webp");
+  await site.call("cover", { gallery: "baseball", src: first.body.previous, undo: true }, { token });
+  assert.equal(coverField(site, "staging", "baseball"), undefined);
+  const s = await state(site, token);
+  assert.equal(s.changes.hasChanges, false, "back to exactly what's live");
+});
+
+test("cover: legacy albums keep their original designed cover until Jacob picks one, and can go back to it", async () => {
+  const site = await createTestSite();
+  const token = await site.login();
+  site.fake.commitTo("main", { "public/covers/baseball.jpg": await makeImage() });
+  const g = await gallery(site, token, "baseball");
+  assert.equal(g.cover.kind, "original");
+  assert.equal(g.cover.photo, null, "the test album doesn't contain the photo it was cut from");
+  assert.ok(g.cover.fallbackUrl.endsWith("/public/covers/baseball.jpg"));
+  assert.equal(g.originalCover.src, "/covers/baseball.jpg");
+  assert.equal(coverField(site, "staging", "baseball"), undefined, "nothing was migrated");
+
+  await site.call("cover", { gallery: "baseball", src: "/galleries/baseball/a.webp" }, { token });
+  const r = await site.call("cover", { gallery: "baseball", src: "/covers/baseball.jpg" }, { token });
+  assert.equal(r.status, 200);
+  assert.equal(r.body.snapshot.gallery.cover.kind, "original");
+  const s = await state(site, token);
+  assert.equal(s.changes.galleries.find((x) => x.slug === "baseball")?.coverChanged ?? false, false, "same cover as live");
+
+  // If the chosen photo is removed, the fallback is the first photo, not the old designed cover.
+  await site.call("cover", { gallery: "baseball", src: "/galleries/baseball/a.webp" }, { token });
+  const rm = await site.call("remove", { gallery: "baseball", srcs: ["/galleries/baseball/a.webp"] }, { token });
+  assert.equal(rm.body.snapshot.gallery.cover.photo, "/galleries/baseball/c.webp");
+});
+
+test("cover: a chosen cover whose file vanished outside /admin still resolves to a real photo", async () => {
+  const site = await createTestSite();
+  const token = await site.login();
+  site.fake.commitTo("main", { "src/data/galleries/portraits.json": JSON.stringify({ cover: "/galleries/portraits/gone.jpg", images: [{ src: "/galleries/portraits/p1.jpg", alt: "" }] }) });
+  const g = await gallery(site, token, "portraits");
+  assert.equal(g.cover.photo, "/galleries/portraits/p1.jpg");
+  assert.equal(g.cover.stale, true);
 });
