@@ -11,6 +11,8 @@
 //   restore          { gallery, items: [{ src, sha?, index? }] }
 //   reorder          { gallery, order: [src] }
 //   cover            { gallery, src, undo? }         -> the album's cover (src: a photo in it, or its original cover)
+//   site-text                                        -> every editable text field, draft + live wording
+//   site-text-save   { changes: [{ key, value, expected }] } -> saved (refused if a field changed elsewhere)
 //   moments-add      { amount }
 //   moments-set      { value, expected }
 //   discard          { gallery? }
@@ -66,11 +68,12 @@ export function createHandler({ auth, engine, gh, fetchLiveCommit, prodBranch = 
   }
 
   /** Strip the internal context and attach fresh state (and gallery) computed from it. */
-  async function withSnapshot(result, gallery) {
+  async function withSnapshot(result, gallery, { siteText = false } = {}) {
     const { ctx, ...rest } = result;
     if (!ctx) return ok(rest);
     const snapshot = { state: await engine.stateFrom(ctx) };
     if (gallery) snapshot.gallery = await engine.galleryFrom(ctx, gallery);
+    if (siteText) snapshot.siteText = await engine.siteTextFrom(ctx);
     return ok({ ...rest, snapshot });
   }
 
@@ -152,6 +155,15 @@ export function createHandler({ auth, engine, gh, fetchLiveCommit, prodBranch = 
       return withSnapshot(await engine.setCover(slug, src, { undo: undo === true }, hints(req)), slug);
     },
 
+    async "site-text"(req) {
+      return ok(await engine.siteText(hints(req)));
+    },
+
+    async "site-text-save"(req) {
+      const { changes } = await readJsonBody(req);
+      return withSnapshot(await engine.setText(changes, hints(req)), null, { siteText: true });
+    },
+
     async "moments-add"(req) {
       const { amount } = await readJsonBody(req);
       return withSnapshot(await engine.addToMoments(amount, hints(req)));
@@ -225,7 +237,7 @@ export function createHandler({ auth, engine, gh, fetchLiveCommit, prodBranch = 
       return await ops[op](req, session);
     } catch (err) {
       if (err instanceof ImageError) return fail(422, err.code, err.message);
-      if (err instanceof ContentError) return fail(err.status, err.code, err.message);
+      if (err instanceof ContentError) return fail(err.status, err.code, err.message, err.extra || {});
       if (err instanceof GitHubError) {
         log.error?.(`[admin] GitHub error ${err.status} on ${op}: ${err.message} (${err.path})`);
         if (err.rateLimited) {

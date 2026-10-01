@@ -27,13 +27,15 @@ export const IMAGE_EXT = /\.(jpe?g|png|webp|avif)$/i;
 export const GALLERIES_PREFIX = "public/galleries/";
 export const GALLERY_DATA_PREFIX = "src/data/galleries/";
 export const STATS_PATH = "src/data/stats.json";
+export const COPY_PATH = "src/data/copy.json"; // site text (see site-text.mjs)
 
 // Paths that count as "content" (what Jacob manages). Everything else is code.
 export function isContentPath(path) {
   return (
     (path.startsWith(GALLERIES_PREFIX) && IMAGE_EXT.test(path)) ||
     (path.startsWith(GALLERY_DATA_PREFIX) && path.endsWith(".json")) ||
-    path === STATS_PATH
+    path === STATS_PATH ||
+    path === COPY_PATH
   );
 }
 

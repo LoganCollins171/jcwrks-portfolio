@@ -35,6 +35,7 @@ export async function createTestSite({ now } = {}) {
   const files = {
     "src/pages/index.astro": "<h1>code</h1>",
     "src/data/stats.json": JSON.stringify({ photosTaken: 68527 }, null, 2) + "\n",
+    "src/data/copy.json": JSON.stringify({ text: {} }, null, 2) + "\n", // ships empty, like production
   };
   for (const slug of GALLERY_SLUGS) files[`src/data/galleries/${slug}.json`] = JSON.stringify({ images: [] }, null, 2) + "\n";
 

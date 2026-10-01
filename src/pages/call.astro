@@ -1,6 +1,7 @@
 ---
 import Layout from "../layouts/Layout.astro";
 import { site } from "../data/site";
+import { text } from "../lib/copy";
 
 // Paste Jacob's scheduling embed URL here once his calendar is connected.
 // Works with Google Calendar Appointment Schedule, Calendly, or Cal.com.
@@ -10,10 +11,10 @@ const SCHEDULER_URL = "https://cal.com/jacob-combs-lqhqhn/15-minute-call";
   <section class="mx-auto max-w-[1100px] px-6 sm:px-10 pt-28 sm:pt-32 pb-24">
     <a href="/contact" class="text-fog hover:text-bone text-sm">← Back to contact</a>
     <h1 data-reveal class="font-display font-medium text-4xl sm:text-6xl tracking-[-0.02em] mt-6 mb-4">
-      <span class="text-fog">Let's hop on a</span> quick call.
+      <span class="text-fog">{text("call.headline.muted")}</span> {text("call.headline.strong")}
     </h1>
     <p data-reveal class="text-fog text-lg max-w-xl mb-10">
-      Pick a time that works for you — about 15 minutes to talk through your shoot.
+      {text("call.intro")}
     </p>
 
     {SCHEDULER_URL ? (

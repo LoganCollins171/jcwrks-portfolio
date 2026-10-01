@@ -7,6 +7,9 @@
 // `count` is just how many placeholder photos to render for now. When real
 // photos arrive we'll replace `count` with a real `photos: [...]` list.
 // `cover` is the tile image, e.g. "/covers/soccer.jpg".
+// `blurb` is site text Jacob can edit in /admin (src/lib/site-text.mjs has the original wording).
+
+import { text } from "../lib/copy";
 
 export interface Gallery {
   slug: string;
@@ -29,7 +32,7 @@ export const categories: Category[] = [
   {
     slug: "sports",
     title: "Sports",
-    blurb: "Where I Do My Best Work — Game On The Line, Everything To Play For.",
+    blurb: text("categories.sports.blurb"),
     type: "group",
     cover: "/covers/sports.jpg",
     sub: [
@@ -45,7 +48,7 @@ export const categories: Category[] = [
   {
     slug: "portraits",
     title: "Portraits",
-    blurb: "Real People, Real Personality — Let's Make You Look Good.",
+    blurb: text("categories.portraits.blurb"),
     type: "gallery",
     count: 10,
     cover: "/covers/portraits.jpg",
@@ -53,7 +56,7 @@ export const categories: Category[] = [
   {
     slug: "landscape",
     title: "Landscape",
-    blurb: "When The Scenery's Too Good Not To Shoot.",
+    blurb: text("categories.landscape.blurb"),
     type: "gallery",
     count: 8,
     cover: "/covers/landscape.jpg",
@@ -61,7 +64,7 @@ export const categories: Category[] = [
   {
     slug: "cars",
     title: "Cars",
-    blurb: "Clean Builds And Good Light — My Kind Of Detail Work.",
+    blurb: text("categories.cars.blurb"),
     type: "gallery",
     count: 8,
     cover: "/covers/cars.jpg",
@@ -69,7 +72,7 @@ export const categories: Category[] = [
   {
     slug: "graphics",
     title: "Graphics",
-    blurb: "Commitments, Game Day, Senior Night — I'll Design It For You.",
+    blurb: text("categories.graphics.blurb"),
     type: "gallery",
     count: 8,
     cover: "/covers/graphics.jpg",

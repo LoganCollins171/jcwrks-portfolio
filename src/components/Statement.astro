@@ -1,9 +1,11 @@
 ---
 // Editorial breather — two-tone heading with a word-by-word cascade reveal on scroll.
 // Each word rises into place in sequence, with the emphasis words in solid bone.
-const lead = "Nothing beats freezing the moment everyone's going to remember —";
-const emphasis = "the big plays, the real emotion, the stuff you'll want to look back on.";
-const tail = "Shot clean. That's what I'm here for.";
+// The three parts are site text Jacob can edit in /admin.
+import { text } from "../lib/copy";
+const lead = text("home.statement.lead");
+const emphasis = text("home.statement.emphasis");
+const tail = text("home.statement.tail");
 
 const leadWords = lead.split(" ");
 const emWords = emphasis.split(" ");
@@ -14,7 +16,7 @@ let n = 0;
 <section class="mx-auto max-w-[1400px] px-6 sm:px-10 pt-16 sm:pt-24 pb-6 sm:pb-8 border-t border-line">
   <div class="max-w-4xl">
     <p data-reveal class="text-fog tracking-[0.25em] uppercase text-[11px] mb-6 flex items-center gap-3">
-      <span class="h-px w-7 bg-accent inline-block"></span> The approach
+      <span class="h-px w-7 bg-accent inline-block"></span> {text("home.statement.label")}
     </p>
     <p data-words class="font-display font-medium text-3xl sm:text-5xl leading-[1.12] tracking-[-0.02em] text-fog">
       {leadWords.map((w) => (

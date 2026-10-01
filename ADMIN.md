@@ -48,6 +48,30 @@ keep their original designed covers until Jacob picks a photo. Basketball's orig
 of its album photos, so its picker also offers "Original"; for the others /admin tags the album photo
 the original was cut from. The Sports group tile (`sports.json`) isn't an album and isn't editable.
 
+## Site text
+
+Jacob edits the wording on the public pages at **/admin → Site text** (`#/text`), grouped by page:
+Home, Photo & Video, Categories, About, Contact, Call, Thanks, Footer. 36 plain-text fields: one-line
+fields plus the About bio (paragraphs). Each field shows a character counter, "Not saved" /
+"Not published yet", Undo edit and "Use the live wording". Saving shows a toast with Undo.
+
+- **Where it lives:** `src/data/copy.json` = `{ "text": { "<field>": "<wording>" } }`. It's content,
+  so it goes through the same draft → review → Publish → Throw away flow as photos.
+- **The field list** (labels, pages, limits, original wording) is `src/lib/site-text.mjs`, shared by the
+  site build (`src/lib/copy.ts`), the API and /admin. A field that's missing, empty or invalid shows the
+  original wording, so the file ships as `{ "text": {} }` and the site looks exactly as before.
+- **Rules (the server decides):** plain text only (never HTML; the site escapes everything), control and
+  text-direction characters removed, one-line fields collapse spaces/line breaks, the bio keeps paragraphs
+  (blank line between, at most 6, each up to 600 characters), per-field length limits, no empty fields.
+  Wording equal to the original isn't stored, so putting it back leaves nothing to publish.
+- **Conflicts:** every save sends the wording Jacob started from. If a field changed elsewhere since, the
+  whole save is refused, nothing is overwritten, and /admin shows the newer wording next to his.
+- **Publish review:** "Site text, About: 2 changes" per page, with "See exact wording" (old struck through,
+  new below) on the dashboard and in the Ready to publish dialog. After publishing, /admin checks each
+  changed page really shows the new wording before saying Published ✓.
+- The reply time ("within 24 hours") is one field used on Contact and Thanks. The footer year is the year
+  the site was built.
+
 ## Architecture (one writer, one pipeline)
 
 ```
@@ -63,7 +87,7 @@ reorder / cover / Moments Captured   (compare-and-swap, retried on races)
 poll until live                --->  compares /build.json commit          <-- live site
 ```
 
-- **Content** = `public/galleries/<gallery>/*`, `src/data/galleries/*.json`, `src/data/stats.json`.
+- **Content** = `public/galleries/<gallery>/*`, `src/data/galleries/*.json`, `src/data/stats.json`, `src/data/copy.json`.
   Everything else is code and always comes from `main`, so publishing never reverts a code deploy.
 - **Draft** = `staging`. Every change is one commit there. The function is the ONLY
   thing that writes to it (the old shrink/sync/publish GitHub Actions are gone).

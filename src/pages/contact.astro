@@ -2,13 +2,14 @@
 import Layout from "../layouts/Layout.astro";
 import { site } from "../data/site";
 import Socials from "../components/Socials.astro";
+import { text } from "../lib/copy";
 const inputCls =
   "w-full bg-panel border border-line rounded-lg px-4 py-3 text-bone placeholder:text-fog/50 focus:outline-none focus:border-accent transition-colors";
 ---
 <Layout title="Contact — Jacob Combs">
   <section class="mx-auto max-w-[1200px] px-6 sm:px-10 pt-28 sm:pt-32 pb-24">
     <h1 data-reveal class="font-display font-medium text-4xl sm:text-6xl tracking-[-0.02em] mb-10 sm:mb-14">
-      <span class="text-fog">Ready to create something?</span> Let's talk.
+      <span class="text-fog">{text("contact.headline.muted")}</span> {text("contact.headline.strong")}
     </h1>
 
     <div class="grid lg:grid-cols-[1.55fr_1fr] gap-6 sm:gap-8 items-start">
@@ -72,20 +73,20 @@ const inputCls =
         <div class="rounded-3xl bg-charcoal border border-line p-6 sm:p-7">
           <img src="/jacob-headshot-chip.jpg" alt="Jacob Combs" class="w-16 h-16 rounded-full object-cover border border-line mb-5" />
           <p class="text-lg leading-relaxed">
-            <span class="font-medium text-bone">Prefer a quick chat?</span>
-            <span class="text-fog"> Pick a time that works and we'll hop on a quick call about your shoot.</span>
+            <span class="font-medium text-bone">{text("contact.call.lead")}</span>
+            <span class="text-fog"> {text("contact.call.body")}</span>
           </p>
-          <div class="mt-5 inline-block rounded-full bg-panel px-4 py-1.5 text-fog text-sm">≈ 15 minutes</div>
+          <div class="mt-5 inline-block rounded-full bg-panel px-4 py-1.5 text-fog text-sm">{text("contact.call.duration")}</div>
           <a href="/call" class="btn btn-outline mt-6 block w-full px-6 py-3 text-sm">Book a call</a>
         </div>
 
         <div class="rounded-3xl bg-charcoal border border-line p-6 sm:p-7">
           <p class="text-fog text-[11px] uppercase tracking-[0.25em] mb-2">Email</p>
           <a href={`mailto:${site.email}`} class="font-display font-medium text-lg break-all hover:text-accent-bright transition-colors">{site.email}</a>
-          <p class="text-fog text-sm mt-1">I reply {site.responseTime}.</p>
+          <p class="text-fog text-sm mt-1">I reply {text("site.responseTime")}.</p>
 
           <p class="text-fog text-[11px] uppercase tracking-[0.25em] mt-6 mb-2">Based in / covers</p>
-          <p class="font-medium">{site.coverage}</p>
+          <p class="font-medium">{text("site.coverage")}</p>
 
           <Socials class="mt-6" />
         </div>

@@ -2,6 +2,7 @@
 // Success page for the contact form (form action="/thanks") — without this,
 // Netlify shows its own generic grey "Thank you" screen after submitting.
 import Layout from "../layouts/Layout.astro";
+import { text } from "../lib/copy";
 ---
 <Layout title="Message sent — Jacob Combs" noindex={true}>
   <section class="mx-auto max-w-[1100px] px-6 sm:px-10 min-h-[80svh] flex flex-col justify-center">
@@ -9,11 +10,10 @@ import Layout from "../layouts/Layout.astro";
       <span class="h-px w-7 bg-accent inline-block"></span> Message sent
     </p>
     <h1 class="font-display font-medium text-5xl sm:text-7xl tracking-[-0.02em] leading-[0.95]">
-      <span class="text-fog">Nice shot.</span> Got it.
+      <span class="text-fog">{text("thanks.headline.muted")}</span> {text("thanks.headline.strong")}
     </h1>
     <p class="text-fog text-lg mt-5 max-w-md">
-      Thanks for reaching out — I'll get back to you within 24 hours. Can't wait
-      to hear what you have in mind.
+      {text("thanks.body.start")} {text("site.responseTime")}. {text("thanks.body.end")}
     </p>
     <div class="mt-9 flex flex-wrap gap-3">
       <a href="/photo-video" class="btn btn-solid px-6 py-2.5 text-sm">See My Work</a>

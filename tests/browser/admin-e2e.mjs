@@ -651,6 +651,150 @@ await step("cover: an empty gallery explains itself and offers no picker", async
   await goHome();
 });
 
+// ---------------- site text ----------------
+const tf = (key) => `.tf[data-key="${key}"]`;
+const fieldVal = (key) => page.$eval(`${tf(key)} .tf-input`, (i) => i.value);
+const typeInto = async (key, value) => { await page.fill(`${tf(key)} .tf-input`, value); };
+async function apiAs(op, body) {
+  const login = await (await fetch(`${BASE}/api/admin?op=login`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ password: "test-password-not-real" }) })).json();
+  return (await fetch(`${BASE}/api/admin?op=${op}`, { method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${login.token}` }, body: JSON.stringify(body) })).json();
+}
+async function openText() {
+  if (await page.isVisible("#textView")) return;
+  if (!(await page.isVisible("#homeView"))) { await page.goto(`${BASE}/admin/#/`); await page.waitForSelector("#homeView:not([hidden])"); }
+  await tap("#textCardBtn");
+  await page.waitForSelector("#textView:not([hidden])");
+  await page.waitForFunction(() => document.querySelectorAll("#textForm .tf").length === 36, null, { timeout: 30000 });
+}
+const kickerOrig = "Freelance Photographer";
+
+await step("site text: dashboard card opens the editor, grouped by page with plain labels and counters", async () => {
+  await openText();
+  assert.deepEqual(await page.$$eval("#textForm .text-page h2", (h) => h.map((x) => x.textContent)), ["Home", "Photo & Video", "Categories", "About", "Contact", "Call", "Thanks", "Footer"]);
+  assert.equal(await fieldVal("home.hero.kicker"), kickerOrig);
+  assert.equal(await page.textContent(`${tf("home.hero.kicker")} .tf-count`), "22 / 28");
+  assert.match(await page.textContent(`${tf("about.bio.body")} .tf-count`), /4 paragraphs \(up to 6\) · longest 273 \/ 600/);
+  assert.match(await page.textContent(`${tf("thanks.body.start")} .tf-preview`), /Thanks for reaching out — I'll get back to you within 24 hours\. Can't wait/);
+  const html = await page.content();
+  assert.doesNotMatch(await page.textContent("#textView"), /home\.hero|copy\.json|JSON|\{/, "no keys or developer terms on screen");
+  assert.ok(html.length > 0);
+  assert.ok(await page.isHidden("#textBar"));
+  await page.evaluate(() => scrollTo(0, 0)); await page.waitForTimeout(300);
+  await shot("21-site-text");
+});
+
+await step("accessibility: Site text page has no WCAG A/AA violations", async () => axe("site text"));
+
+await step("site text: limits block saving; one-line and paragraph edits save; Undo puts the old wording back", async () => {
+  await typeInto("home.hero.kicker", "Sports & Portrait Photographer!");
+  assert.equal(await page.textContent(`${tf("home.hero.kicker")} .tf-count`), "31 / 28");
+  assert.match(await page.textContent(`${tf("home.hero.kicker")} .tf-note`), /Too long \(31 of 28/);
+  assert.match(await page.textContent("#textBarText"), /Fix the field/);
+  assert.ok(await page.isDisabled("#textSave"));
+  await typeInto("home.hero.kicker", "   Sports   Photographer ");
+  assert.equal(await page.textContent(`${tf("home.hero.kicker")} .tf-flag`), "Not saved");
+  const bio = await fieldVal("about.bio.body");
+  await typeInto("about.bio.body", bio + "\n\nNew last paragraph.");
+  assert.match(await page.textContent("#textBarText"), /2 changes not saved/);
+  assert.match(await text("#statusText"), /Wording not saved/);
+  await page.evaluate(() => scrollTo(0, 0)); await page.waitForTimeout(200);
+  await shot("22-site-text-editing");
+  await tap("#textSave");
+  await waitText("#toastText", /2 wording changes saved/);
+  assert.equal(await fieldVal("home.hero.kicker"), "Sports Photographer", "saved tidy");
+  assert.equal(await page.textContent(`${tf("home.hero.kicker")} .tf-flag`), "Not published yet");
+  assert.ok(await page.isVisible(`${tf("home.hero.kicker")} .tf-live`), "can go back to the live wording");
+  const st = await srv();
+  assert.deepEqual(Object.keys(st.stagingCopy.text).sort(), ["about.bio.body", "home.hero.kicker"]);
+  await tap("#toastAction");
+  await waitText("#toastText", /Wording change undone/);
+  assert.equal(await fieldVal("home.hero.kicker"), kickerOrig);
+  assert.deepEqual((await srv()).stagingCopy.text, {}, "back to exactly what's live");
+  assert.ok(await page.isHidden(`${tf("home.hero.kicker")} .tf-flag`));
+  await typeInto("home.hero.kicker", "Sports Photographer");
+  await tap("#textSave");
+  await waitText("#toastText", /Wording saved/);
+});
+
+await step("site text: wording survives a refresh and a fresh sign-in", async () => {
+  await page.reload();
+  await page.waitForFunction(() => document.querySelectorAll("#textForm .tf").length === 36, null, { timeout: 30000 });
+  assert.equal(await fieldVal("home.hero.kicker"), "Sports Photographer");
+  await page.evaluate(() => localStorage.removeItem("jcwrks_admin_session"));
+  await page.goto(`${BASE}/admin/#/text`); await page.reload();
+  await page.fill("#pw", "test-password-not-real"); await tap("#loginBtn");
+  await page.waitForFunction(() => document.querySelectorAll("#textForm .tf").length === 36, null, { timeout: 30000 });
+  assert.equal(await fieldVal("home.hero.kicker"), "Sports Photographer");
+});
+
+await step("site text: a change made elsewhere is never overwritten; Jacob's wording stays on screen", async () => {
+  const other = await apiAs("site-text-save", { changes: [{ key: "home.hero.kicker", value: "Photographer (other tab)", expected: "Sports Photographer" }] });
+  assert.ok(other.ok, JSON.stringify(other));
+  await typeInto("home.hero.kicker", "Mine wins?");
+  await tap("#textSave");
+  await page.waitForSelector("#alert:not([hidden])");
+  assert.match(await text("#alertText"), /changed somewhere else/);
+  assert.match(await page.textContent(`${tf("home.hero.kicker")} .tf-note`), /changed somewhere else to: “Photographer \(other tab\)”/);
+  assert.equal(await fieldVal("home.hero.kicker"), "Mine wins?");
+  assert.equal((await srv()).stagingCopy.text["home.hero.kicker"], "Photographer (other tab)", "nothing overwritten");
+  await shot("23-site-text-conflict");
+  await tap(`${tf("home.hero.kicker")} .tf-undo`);
+  assert.equal(await fieldVal("home.hero.kicker"), "Photographer (other tab)");
+  await tap("#alertClose");
+});
+
+await step("site text: markup is just characters, never HTML", async () => {
+  await typeInto("contact.call.lead", "<b>Hi</b> & <img src=x>");
+  await tap("#textSave");
+  await waitText("#toastText", /Wording saved/);
+  assert.equal(await fieldVal("contact.call.lead"), "<b>Hi</b> & <img src=x>");
+  assert.equal(await page.$$eval("#textView b, #textView img", (n) => n.filter((x) => !x.closest(".tf-preview")).length), 0);
+});
+
+await step("site text: leaving with unsaved wording asks first", async () => {
+  await typeInto("footer.cta.label", "Need photos?");
+  await tap("#textView .back");
+  await page.waitForSelector("#confirmDialog[open]");
+  assert.equal(await text("#confirmTitle"), "Save your wording?");
+  await tap("#confirmAlt");
+  await page.waitForSelector("#homeView:not([hidden])");
+  await openText();
+  assert.equal(await fieldVal("footer.cta.label"), "Got a shoot in mind?");
+});
+
+await step("site text: review lists each page and the exact wording; publish verifies the live pages", async () => {
+  await page.goto(`${BASE}/admin/#/`); await page.waitForSelector("#homeView:not([hidden])"); await page.waitForTimeout(500);
+  assert.match(await text("#textCardStatus"), /2 wording changes not published yet/);
+  const items = await page.$$eval("#reviewList .review-item", (els) => els.map((e) => e.querySelector("h4").textContent + " | " + e.querySelector("ul").textContent));
+  assert.deepEqual(items, ["Home | Wording: 1 change", "Contact | Wording: 1 change"]);
+  await page.locator("#reviewList details summary").first().click();
+  assert.match(await page.textContent("#reviewList details"), /Small heading above your name.*Freelance Photographer.*Photographer \(other tab\)/s);
+  await page.locator("#publishCard").scrollIntoViewIfNeeded(); await page.waitForTimeout(300);
+  await shot("24-review-wording");
+  await tap("#publishBtn");
+  await page.waitForSelector("#confirmDialog[open]");
+  assert.match(await text("#confirmBody"), /See exact wording/);
+  await tap("#confirmOk");
+  await waitText("#pubTitle", /^Published ✓$/, 60000);
+  const live = await (await fetch(`${BASE}/`)).text();
+  assert.ok(live.includes("Photographer (other tab)"));
+  const contact = await (await fetch(`${BASE}/contact/`)).text();
+  assert.ok(contact.includes("&lt;b&gt;Hi&lt;/b&gt; &amp; &lt;img src=x&gt;"), "escaped on the page");
+});
+
+await step("site text: Throw away all unpublished changes restores the wording", async () => {
+  await openText();
+  await typeInto("site.coverage", "All of Michigan");
+  await tap("#textSave"); await waitText("#toastText", /Wording saved/);
+  await page.goto(`${BASE}/admin/#/`); await page.waitForSelector("#homeView:not([hidden])");
+  await tap("#discardBtn"); await page.waitForSelector("#confirmDialog[open]");
+  await page.check("#confirmCheck"); await tap("#confirmOk");
+  await waitText("#toastText", /thrown away/);
+  await openText();
+  assert.equal(await fieldVal("site.coverage"), "Metro Detroit & East Lansing, MI");
+  await page.goto(`${BASE}/admin/#/`); await page.waitForSelector("#homeView:not([hidden])");
+});
+
 await step("keyboard: focus a photo, Enter opens options, Escape closes", async () => {
   if (isTouch) return "SKIP";
   await openGallery("baseball");

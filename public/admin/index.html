@@ -12,7 +12,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <!-- same families the portfolio loads (src/styles/global.css) -->
   <link href="https://fonts.googleapis.com/css2?family=Inter+Tight:wght@400;500;600;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/admin/admin.css?v=5" />
+  <link rel="stylesheet" href="/admin/admin.css?v=6" />
 </head>
 <body>
   <header class="topbar" data-nav>
@@ -94,6 +94,13 @@
       <section class="band" aria-labelledby="galleriesTitle" data-reveal style="--d:140ms">
         <p class="eyebrow" id="galleriesTitle">Galleries</p>
         <ul class="gallery-list" id="galleryList"></ul>
+      </section>
+
+      <section class="band" aria-labelledby="textCardTitle" data-reveal style="--d:170ms">
+        <p class="eyebrow" id="textCardTitle">Site text</p>
+        <p class="text-card-copy">Change the wording on your pages: headlines, your bio, contact details and more.</p>
+        <p class="text-card-status" id="textCardStatus" hidden></p>
+        <a class="btn" href="#/text" id="textCardBtn">Edit site text</a>
       </section>
 
       <section class="band" id="publishCard" aria-labelledby="publishTitle" tabindex="-1" data-reveal style="--d:200ms">
@@ -198,6 +205,19 @@
         <p class="empty" id="emptyGallery" hidden>No photos here yet. Tap “Add photos” to start this gallery.</p>
       </section>
     </div>
+
+    <!-- ============ SITE TEXT ============ -->
+    <div id="textView" hidden>
+      <div class="gallery-head">
+        <a class="back" href="#/">← Dashboard</a>
+        <p class="eyebrow" style="margin:14px 0 10px">Your pages</p>
+        <h1 id="textTitle" tabindex="-1">Site text</h1>
+        <p class="count-line">Edit, then tap Save. Nothing changes on jcwrks.com until you publish.</p>
+        <nav class="text-jump" id="textJump" aria-label="Jump to a page"></nav>
+      </div>
+      <div id="textForm" class="text-form"></div>
+      <p class="empty" id="textLoading">Loading your wording…</p>
+    </div>
   </main>
 
   <!-- ============ STICKY BARS ============ -->
@@ -211,6 +231,13 @@
       <span class="bar-actions">
         <button class="btn small light-outline" id="undoOrder" type="button">Undo</button>
         <button class="btn small light" id="saveOrder" type="button">Save order</button>
+      </span>
+    </div>
+    <div class="bar" id="textBar" hidden>
+      <span id="textBarText">Changes not saved</span>
+      <span class="bar-actions">
+        <button class="btn small light-outline" id="textUndoAll" type="button">Undo</button>
+        <button class="btn small light" id="textSave" type="button">Save</button>
       </span>
     </div>
     <div class="bar" id="selectBar" hidden>
@@ -287,6 +314,6 @@
   </dialog>
 
   <script src="/admin/vendor/Sortable.min.js?v=1.15.7"></script>
-  <script src="/admin/admin.js?v=5"></script>
+  <script src="/admin/admin.js?v=6"></script>
 </body>
 </html>

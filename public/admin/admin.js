@@ -58,6 +58,9 @@
     lastDone: 0,
     locks: new Set(),     // prevents double taps from running an action twice
     removedAt: new Map(), // "slug|src" -> { index, sha } from this session, so Put back returns to the exact spot
+    text: null,           // Site text: { pages, fields, draftSha } from the server
+    textEdits: new Map(), // field key -> wording typed but not saved yet
+    textNotes: new Map(), // field key -> { kind, text } shown under the field (conflicts, problems)
   };
 
   // ------------------------------------------------------------------ helpers
@@ -132,7 +135,7 @@
       const message = err.message || (res.status === 413
         ? "That photo was too large to send. Please try again."
         : "Something went wrong. Nothing was lost. Please try again.");
-      throw new ApiError(res.status, code, message, { retryAfterSec: err.retryAfterSec });
+      throw new ApiError(res.status, code, message, { retryAfterSec: err.retryAfterSec, fields: err.fields });
     }
   }
 
@@ -150,6 +153,7 @@
     if (!snap) return;
     if (snap.state) setState(snap.state);
     if (snap.gallery && snap.gallery.gallery === S.gallery) setGallery(snap.gallery);
+    if (snap.siteText) setSiteText(snap.siteText);
   }
 
   async function withBusy(fn) {
@@ -161,8 +165,8 @@
 
   // ------------------------------------------------------------------ views & routing
   function showOnly(id) {
-    for (const v of ["loginView", "loadingView", "homeView", "galleryView"]) $(v).hidden = v !== id;
-    $("statusPill").hidden = !(id === "homeView" || id === "galleryView");
+    for (const v of ["loginView", "loadingView", "homeView", "galleryView", "textView"]) $(v).hidden = v !== id;
+    $("statusPill").hidden = !(id === "homeView" || id === "galleryView" || id === "textView");
     S.reveal?.();
   }
 
@@ -177,6 +181,7 @@
   }
 
   function route() {
+    if (/^#\/text(\/[a-z]+)?$/.test(location.hash)) return { view: "text", page: location.hash.split("/")[2] || null };
     const m = location.hash.match(/^#\/gallery\/([a-z]+)$/);
     return m ? { view: "gallery", slug: m[1] } : { view: "home" };
   }
@@ -186,6 +191,11 @@
     if (ignoreHash) { ignoreHash = false; return; }
     if (!S.token || !S.state) return;
     const next = route();
+    if (S.view === "text" && next.view !== "text" && !(await guardUnsavedText())) {
+      ignoreHash = true;
+      location.hash = "#/text";
+      return;
+    }
     if (S.view === "gallery" && (next.view !== "gallery" || next.slug !== S.gallery)) {
       const okToLeave = await guardUnsavedOrder();
       if (!okToLeave) {
@@ -228,6 +238,18 @@
       } catch (err) {
         if (err.code !== "signed_out") showAlert(`Couldn't open this gallery. ${err.message}`, { action: "Try again", onAction: () => openRoute(r) });
       }
+    } else if (r.view === "text") {
+      const wasText = S.view === "text";
+      S.view = "text";
+      S.gallery = null;
+      showOnly("textView");
+      if (!wasText) {
+        window.scrollTo(0, 0);
+        $("textTitle").focus?.({ preventScroll: true });
+        if (S.text) renderTextForm();
+        await loadSiteText();
+      }
+      if (r.page) document.getElementById(`text-${r.page}`)?.scrollIntoView({ block: "start" });
     } else {
       S.view = "home";
       S.gallery = null;
@@ -478,6 +500,9 @@
       rows.push(li);
     }
     list.replaceChildren(...rows);
+    const pendingText = (st.changes.text || []).reduce((n, p) => n + p.fields.length, 0);
+    $("textCardStatus").hidden = !pendingText;
+    $("textCardStatus").textContent = `${plural(pendingText, "wording change")} not published yet`;
     renderReview();
   }
 
@@ -529,6 +554,18 @@
       box.append(h, ul);
       items.push(box);
     }
+    for (const page of c.text || []) {
+      const box = document.createElement("div");
+      box.className = "review-item";
+      const h = document.createElement("h4");
+      h.textContent = page.label;
+      const ul = document.createElement("ul");
+      const li = document.createElement("li");
+      li.textContent = `Wording: ${plural(page.fields.length, "change")}`;
+      ul.appendChild(li);
+      box.append(h, ul, wordingDetails(page.fields));
+      items.push(box);
+    }
     if (c.hasChanges && !items.length) {
       const box = document.createElement("div");
       box.className = "review-item";
@@ -536,6 +573,32 @@
       items.push(box);
     }
     $("reviewList").replaceChildren(...items);
+  }
+
+  /** "See exact wording": every changed field, old wording struck through, new wording below. */
+  function wordingDetails(fields) {
+    const d = document.createElement("details");
+    d.className = "wording";
+    const sum = document.createElement("summary");
+    sum.textContent = "See exact wording";
+    const dl = document.createElement("dl");
+    for (const f of fields) {
+      const dt = document.createElement("dt");
+      dt.textContent = f.label;
+      const dd = document.createElement("dd");
+      const was = document.createElement("span");
+      was.className = "was";
+      was.textContent = f.before;
+      was.setAttribute("aria-label", `Was: ${f.before}`);
+      const now = document.createElement("span");
+      now.className = "now";
+      now.textContent = f.after;
+      now.setAttribute("aria-label", `Now: ${f.after}`);
+      dd.append(was, now);
+      dl.append(dt, dd);
+    }
+    d.append(sum, dl);
+    return d;
   }
 
   function reviewNode() {
@@ -1016,6 +1079,271 @@
     renderGrid();
   }
 
+  // ------------------------------------------------------------------ site text
+  // The wording on the public pages. Same rules as the server (src/lib/site-text.mjs);
+  // the server re-checks everything and is the one that decides.
+  const CONTROL = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F\u202A-\u202E\u2066-\u2069]/g;
+  const chars = (s) => [...s].length;
+  function cleanText(value, f) {
+    const s = String(value).replace(/\r\n?|\u2028|\u2029/g, "\n").replace(/\t/g, " ").replace(CONTROL, "");
+    if (f.kind === "paragraphs") return s.split(/\n[^\S\n]*\n\s*/).map((p) => p.replace(/\s+/g, " ").trim()).filter(Boolean).join("\n\n");
+    return s.replace(/\s+/g, " ").trim();
+  }
+  function textProblem(clean, f) {
+    if (!clean) return "Can't be empty.";
+    if (f.kind === "paragraphs") {
+      const paras = clean.split("\n\n");
+      if (paras.length > f.maxParagraphs) return `Too many paragraphs (${paras.length} of ${f.maxParagraphs}).`;
+      const i = paras.findIndex((p) => chars(p) > f.max);
+      return i === -1 ? null : `Paragraph ${i + 1} is too long (${fmt(chars(paras[i]))} of ${fmt(f.max)} characters).`;
+    }
+    return chars(clean) > f.max ? `Too long (${fmt(chars(clean))} of ${fmt(f.max)} characters).` : null;
+  }
+  const textField = (key) => S.text?.fields.find((f) => f.key === key);
+  const textDirty = () => S.textEdits.size > 0;
+  const textInvalid = () => [...S.textEdits].some(([key, v]) => textProblem(cleanText(v, textField(key)), textField(key)));
+  /** What the field shows right now: Jacob's unsaved edit, else the saved draft wording. */
+  const textNow = (f) => (S.textEdits.has(f.key) ? S.textEdits.get(f.key) : f.value);
+
+  async function loadSiteText() {
+    try {
+      setSiteText(await api("site-text"));
+    } catch (err) {
+      if (err.code !== "signed_out") showAlert(`Couldn't load your site text. ${err.message}`, { action: "Try again", onAction: loadSiteText });
+    }
+  }
+
+  function setSiteText(data) {
+    S.text = data;
+    // An edit that now matches what's saved isn't an edit any more.
+    for (const [key, v] of [...S.textEdits]) {
+      const f = textField(key);
+      if (!f || cleanText(v, f) === f.value) S.textEdits.delete(key);
+    }
+    if (S.view === "text") renderTextForm();
+    refreshControls();
+  }
+
+  function renderTextForm() {
+    $("textLoading").hidden = !!S.text;
+    if (!S.text) return;
+    const focusedKey = document.activeElement?.closest?.(".tf")?.dataset.key;
+    const caret = focusedKey ? [document.activeElement.selectionStart, document.activeElement.selectionEnd] : null;
+    const sections = S.text.pages.map((page) => {
+      const sec = document.createElement("section");
+      sec.className = "text-page";
+      sec.id = `text-${page.id}`;
+      const h = document.createElement("h2");
+      h.textContent = page.label;
+      sec.appendChild(h);
+      for (const f of S.text.fields.filter((x) => x.page === page.id)) sec.appendChild(textFieldEl(f));
+      return sec;
+    });
+    $("textForm").replaceChildren(...sections);
+    $("textJump").replaceChildren(...S.text.pages.map((page) => {
+      const a = document.createElement("a");
+      a.href = `#/text/${page.id}`;
+      a.dataset.page = page.id;
+      a.textContent = page.label;
+      return a;
+    }));
+    for (const f of S.text.fields) paintTextField(f);
+    if (focusedKey) {
+      const input = document.querySelector(`.tf[data-key="${CSS.escape(focusedKey)}"] .tf-input`);
+      if (input) { input.focus({ preventScroll: true }); try { input.setSelectionRange(...caret); } catch {} }
+    }
+    S.reveal?.();
+  }
+
+  function textFieldEl(f) {
+    const wrap = document.createElement("div");
+    wrap.className = "tf" + (f.kind === "paragraphs" ? " paras" : "");
+    wrap.dataset.key = f.key;
+    const id = `tf-${f.key.replace(/[^a-z0-9]+/gi, "-")}`;
+    const head = document.createElement("div");
+    head.className = "tf-head";
+    const label = document.createElement("label");
+    label.htmlFor = id;
+    label.textContent = f.label;
+    const flag = document.createElement("span");
+    flag.className = "tf-flag";
+    head.append(label, flag);
+    wrap.appendChild(head);
+    const described = [];
+    if (f.help) {
+      const help = document.createElement("p");
+      help.className = "tf-help";
+      help.id = `${id}-help`;
+      help.textContent = f.help;
+      wrap.appendChild(help);
+      described.push(help.id);
+    }
+    const input = f.kind === "line" && f.max <= 40 ? Object.assign(document.createElement("input"), { type: "text" }) : document.createElement("textarea");
+    input.className = "tf-input";
+    input.id = id;
+    input.value = textNow(f);
+    input.spellcheck = true;
+    input.setAttribute("autocomplete", "off");
+    if (input.tagName === "TEXTAREA") input.rows = f.kind === "paragraphs" ? 12 : 2;
+    if (f.kind === "line") input.addEventListener("keydown", (e) => { if (e.key === "Enter") e.preventDefault(); });
+    input.addEventListener("input", () => {
+      if (cleanText(input.value, f) === f.value) S.textEdits.delete(f.key); else S.textEdits.set(f.key, input.value);
+      S.textNotes.delete(f.key);
+      paintTextField(f);
+      refreshControls();
+    });
+    wrap.appendChild(input);
+    const meta = document.createElement("div");
+    meta.className = "tf-meta";
+    const count = document.createElement("span");
+    count.className = "tf-count";
+    count.id = `${id}-count`;
+    described.push(count.id);
+    const actions = document.createElement("span");
+    actions.className = "tf-actions";
+    const undo = Object.assign(document.createElement("button"), { type: "button", className: "link tf-undo", textContent: "Undo edit" });
+    undo.onclick = () => { S.textEdits.delete(f.key); S.textNotes.delete(f.key); input.value = f.value; paintTextField(f); refreshControls(); input.focus(); };
+    const live = Object.assign(document.createElement("button"), { type: "button", className: "link tf-live", textContent: "Use the live wording" });
+    live.onclick = () => { input.value = f.live; input.dispatchEvent(new Event("input")); input.focus(); };
+    actions.append(undo, live);
+    meta.append(count, actions);
+    const note = document.createElement("p");
+    note.className = "tf-note";
+    note.id = `${id}-note`;
+    note.setAttribute("role", "status");
+    described.push(note.id);
+    const preview = document.createElement("p");
+    preview.className = "tf-preview";
+    wrap.append(meta, note, preview);
+    input.setAttribute("aria-describedby", described.join(" "));
+    return wrap;
+  }
+
+  /** Sentence previews for the reply time, which is used inside other sentences. */
+  function textPreview(f) {
+    const now = (key) => cleanText(textNow(textField(key)), textField(key));
+    if (f.key === "site.responseTime") return ["Contact page: “I reply ", now("site.responseTime"), ".”"];
+    if (f.key === "thanks.body.start" || f.key === "thanks.body.end") {
+      return ["Reads: “", `${now("thanks.body.start")} ${now("site.responseTime")}. ${now("thanks.body.end")}`, "”"];
+    }
+    return null;
+  }
+
+  function paintTextField(f) {
+    const wrap = document.querySelector(`.tf[data-key="${CSS.escape(f.key)}"]`);
+    if (!wrap) return;
+    const input = wrap.querySelector(".tf-input");
+    const dirty = S.textEdits.has(f.key);
+    const clean = cleanText(input.value, f);
+    const problem = textProblem(clean, f);
+    if (input.tagName === "TEXTAREA" && f.kind === "line") { input.style.height = "auto"; input.style.height = `${input.scrollHeight + 2}px`; }
+    const flag = wrap.querySelector(".tf-flag");
+    const unpublished = !dirty && f.value !== f.live;
+    flag.hidden = !dirty && !unpublished;
+    flag.className = "tf-flag" + (dirty ? " unsaved" : "");
+    flag.textContent = dirty ? "Not saved" : "Not published yet";
+    const count = wrap.querySelector(".tf-count");
+    let n, max;
+    if (f.kind === "paragraphs") {
+      const paras = clean ? clean.split("\n\n") : [];
+      n = Math.max(0, ...paras.map(chars));
+      max = f.max;
+      count.textContent = `${plural(paras.length, "paragraph")} (up to ${f.maxParagraphs}) · longest ${fmt(n)} / ${fmt(max)}`;
+    } else {
+      n = chars(clean);
+      max = f.max;
+      count.textContent = `${fmt(n)} / ${fmt(max)}`;
+    }
+    count.className = "tf-count" + (n > max ? " over" : n > max * 0.9 ? " near" : "");
+    wrap.classList.toggle("bad", dirty && !!problem);
+    wrap.querySelector(".tf-undo").hidden = !dirty;
+    wrap.querySelector(".tf-live").hidden = dirty || f.value === f.live;
+    const note = wrap.querySelector(".tf-note");
+    const custom = S.textNotes.get(f.key);
+    const shown = custom || (dirty && problem ? { kind: "err", text: problem } : null);
+    note.hidden = !shown;
+    note.className = "tf-note" + (shown ? ` ${shown.kind}` : "");
+    note.textContent = shown ? shown.text : "";
+    const preview = wrap.querySelector(".tf-preview");
+    const parts = textPreview(f);
+    preview.hidden = !parts;
+    if (parts) {
+      const b = document.createElement("b");
+      b.textContent = parts[1];
+      preview.replaceChildren(parts[0], b, parts[2]);
+    }
+    const jump = document.querySelector(`#textJump a[data-page="${f.page}"]`);
+    if (jump) jump.classList.toggle("has-changes", S.text.fields.some((x) => x.page === f.page && (x.value !== x.live || S.textEdits.has(x.key))));
+  }
+
+  async function saveText() {
+    if (!textDirty() || textInvalid()) return;
+    return once("text", () => withBusy(async () => {
+      const sent = new Map(S.textEdits);
+      const changes = [...sent].map(([key, value]) => ({ key, value, expected: textField(key).value }));
+      try {
+        const r = await api("site-text-save", { changes });
+        for (const [key, v] of sent) if (S.textEdits.get(key) === v) S.textEdits.delete(key);
+        for (const key of sent.keys()) S.textNotes.delete(key);
+        applySnapshot(r);
+        const saved = r.saved || [];
+        if (!saved.length) { toast("Nothing changed. That's already the wording."); return; }
+        toast(saved.length === 1 ? "Wording saved. Not live until you publish." : `${fmt(saved.length)} wording changes saved. Not live until you publish.`, {
+          action: "Undo",
+          ms: 12000,
+          onAction: () => undoText(saved),
+        });
+      } catch (err) {
+        if (err.code === "text_conflict" && Array.isArray(err.fields)) {
+          for (const c of err.fields) {
+            const f = textField(c.key);
+            if (!f) continue;
+            f.value = c.current; // the next save checks against the latest wording
+            S.textNotes.set(c.key, { kind: "warn", text: `This was changed somewhere else to: “${c.current}”. Your wording is still here. Save again to replace it, or tap Undo edit to keep that one.` });
+            if (cleanText(S.textEdits.get(c.key) ?? "", f) === f.value) S.textEdits.delete(c.key);
+          }
+          renderTextForm();
+          showAlert(err.message, { kind: "warn" });
+        } else if (err.code === "invalid_text" && Array.isArray(err.fields)) {
+          for (const p of err.fields) S.textNotes.set(p.key, { kind: "err", text: p.message });
+          renderTextForm();
+          showAlert(`Your wording wasn't saved. ${err.message}`);
+        } else if (err.code !== "signed_out") {
+          showAlert(`Your wording wasn't saved. ${err.message}`, { action: "Try again", onAction: saveText });
+        }
+        refreshControls();
+      }
+    }));
+  }
+
+  async function undoText(saved) {
+    await once("text", () => withBusy(async () => {
+      try {
+        applySnapshot(await api("site-text-save", { changes: saved.map((x) => ({ key: x.key, value: x.before, expected: x.after })) }));
+        if (!S.text) await loadSiteText();
+        toast("Wording change undone.");
+      } catch (err) {
+        if (err.code === "text_conflict") showAlert(`Couldn't undo: ${err.message}`, { kind: "warn" });
+        else if (err.code !== "signed_out") showAlert(`Couldn't undo the wording change. ${err.message}`);
+      }
+    }));
+  }
+
+  /** Resolves true when it's fine to leave the Site text page. */
+  async function guardUnsavedText() {
+    if (!textDirty()) return true;
+    const choice = await ask({
+      title: "Save your wording?",
+      body: `You changed ${plural(S.textEdits.size, "field")} but haven't saved.`,
+      ok: textInvalid() ? "Keep editing" : "Save wording",
+      alt: "Don't save",
+      cancel: "Keep editing",
+    });
+    if (choice === "ok" && !textInvalid()) { await saveText(); return !textDirty(); }
+    if (choice === "alt") { S.textEdits.clear(); S.textNotes.clear(); if (S.view === "text") renderTextForm(); refreshControls(); return true; }
+    return false;
+  }
+
   // ------------------------------------------------------------------ upload
   const isHeic = (file) => /hei[cf]/i.test(file.type || "") || /\.(heic|heif)$/i.test(file.name || "");
 
@@ -1463,6 +1791,7 @@
     if (isBlocked()) return;
     return once("publish", async () => {
       if (S.view === "gallery" && !(await guardUnsavedOrder())) return;
+      if (S.view === "text" && !(await guardUnsavedText())) return;
       if (S.view !== "home") { location.hash = "#/"; await sleep(50); }
       setPublishUI("preparing", { title: "Preparing update…", detail: "Checking your latest changes." });
       let st;
@@ -1486,6 +1815,7 @@
         moments: st.stats.draft !== st.stats.live ? st.stats.draft : null,
         fromMoments: st.stats.live,
         covers: st.changes.galleries.filter((g) => g.coverChanged && g.draftCover).map((g) => ({ slug: g.slug, title: g.title, src: g.draftCover })),
+        texts: (st.changes.text || []).flatMap((p) => p.fields.map((f) => ({ label: `${p.label} wording`, after: f.after, paths: f.paths }))),
       };
       try {
         const r = await withBusy(() => api("publish", { draftSha: st.draftSha }));
@@ -1555,6 +1885,19 @@
             if (!html.includes(`src="${c.src}"`) && !html.includes(`src="${c.src.replace(/&/g, "&amp;")}"`)) problems.push(label);
           } catch { problems.push(label); }
         }),
+        // New wording must really be on each page it appears on (compared as visible text).
+        ...[...new Set((exp.texts || []).flatMap((t) => t.paths))].map(async (path) => {
+          const wanted = exp.texts.filter((t) => t.paths.includes(path));
+          try {
+            const doc = new DOMParser().parseFromString(await (await fetch(path + bust, { cache: "no-store" })).text(), "text/html");
+            doc.querySelectorAll("script,style,noscript").forEach((n) => n.remove());
+            const flat = (s) => String(s).replace(/[\s\u00a0]+/g, " ").trim();
+            const page = flat(doc.body?.textContent || "");
+            for (const t of wanted) {
+              if (!t.after.split("\n\n").every((para) => page.includes(flat(para))) && !problems.includes(t.label)) problems.push(t.label);
+            }
+          } catch { for (const t of wanted) if (!problems.includes(t.label)) problems.push(t.label); }
+        }),
         (async () => {
           if (!exp.moments) return;
           try {
@@ -1576,6 +1919,7 @@
     toast("Published ✓ Your portfolio is live.", { ms: 6000 });
     await refreshState({ quiet: true }).catch(() => {});
     if (S.gallery && S.view === "gallery") api("gallery", { gallery: S.gallery }).then(setGallery).catch(() => {});
+    if (S.view === "text" && !textDirty()) loadSiteText();
     if (exp.moments != null) {
       const m = crossed(exp.fromMoments, exp.moments, S.state?.milestones || []);
       if (m) celebrate(m);
@@ -1603,7 +1947,7 @@
       if (S.view === "gallery" && !(await guardUnsavedOrder())) return;
       const choice = await ask({
         title: "Throw away all unpublished changes?",
-        body: "New photos that aren't live will be removed, removed photos come back, and Moments Captured goes back to what's on your site. This can't be undone.",
+        body: "New photos that aren't live will be removed, removed photos come back, and Moments Captured and your site text go back to what's on your site. This can't be undone.",
         ok: "Throw away changes",
         danger: true,
         checkText: "Yes, throw away my unpublished changes",
@@ -1614,6 +1958,10 @@
           const r = await api("discard", { gallery: S.gallery || undefined });
           applySnapshot(r);
           toast("Unpublished changes thrown away. Everything matches your live site.");
+          S.text = null;
+          S.textEdits.clear();
+          S.textNotes.clear();
+          if (S.view === "text") loadSiteText();
         } catch (err) {
           if (err.code !== "signed_out") showAlert(`Nothing was thrown away. ${err.message}`);
         }
@@ -1632,6 +1980,14 @@
 
     // gallery
     $("orderBar").hidden = !dirty || S.selecting;
+    const textEdits = S.view === "text" && textDirty();
+    $("textBar").hidden = !textEdits;
+    if (textEdits) {
+      const bad = textInvalid();
+      $("textBarText").textContent = bad ? "Fix the field marked in red to save" : `${plural(S.textEdits.size, "change")} not saved`;
+      $("textSave").disabled = blocked || bad;
+      $("textUndoAll").disabled = blocked;
+    }
     $("saveOrder").disabled = blocked;
     $("undoOrder").disabled = blocked;
     $("addBtn").disabled = blocked || dirty || S.selecting;
@@ -1671,6 +2027,8 @@
       text = S.publishPhase === "verifying" ? "Verifying live site…" : S.publishPhase === "preparing" ? "Preparing…" : "Updating website…"; cls = "busy";
     } else if (S.publishPhase === "stuck" || S.publishPhase === "mismatch") {
       text = "Website not updated yet"; cls = "warn";
+    } else if (S.view === "text" && textDirty()) {
+      text = "Wording not saved"; cls = "warn";
     } else if (S.publishPhase === "done" && !S.state.changes.hasChanges) {
       text = "Published ✓"; cls = "done";
     } else if (dirty) {
@@ -1736,6 +2094,8 @@
       S.state = null;
       showLogin();
     };
+    $("textSave").onclick = saveText;
+    $("textUndoAll").onclick = () => { S.textEdits.clear(); S.textNotes.clear(); renderTextForm(); refreshControls(); announce("Unsaved wording undone."); };
     $("statusPill").onclick = async () => {
       if (S.view !== "home") {
         location.hash = "#/";
@@ -1848,8 +2208,9 @@
     // Coming back to the tab (or the app on iPhone): quietly catch up with other devices.
     document.addEventListener("visibilitychange", () => {
       if (document.visibilityState !== "visible" || !S.token || !S.state) return;
-      if (isBlocked() || (S.view === "gallery" && orderDirty()) || document.querySelector("dialog[open]")) return;
+      if (isBlocked() || (S.view === "gallery" && orderDirty()) || textDirty() || document.querySelector("dialog[open]")) return;
       if (Date.now() - S.lastRefresh < REFRESH_ON_FOCUS_MS) return;
+      if (S.view === "text") loadSiteText();
       refreshState({ quiet: true }).then(() => {
         if (S.view === "gallery" && S.gallery && !orderDirty() && !S.selecting) return api("gallery", { gallery: S.gallery }).then(setGallery);
       }).catch(() => {});
@@ -1857,7 +2218,7 @@
     });
 
     window.addEventListener("beforeunload", (e) => {
-      if (S.upload?.active || (S.view === "gallery" && orderDirty()) || S.busy > 0) {
+      if (S.upload?.active || (S.view === "gallery" && orderDirty()) || textDirty() || S.busy > 0) {
         e.preventDefault();
         e.returnValue = "";
       }

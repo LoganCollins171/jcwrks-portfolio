@@ -2,7 +2,7 @@
 //
 // ONE writer, ONE pipeline:
 //   - Every change Jacob makes (add, remove, restore, reorder, cover, Moments Captured,
-//     discard) is ONE atomic commit on the `staging` branch (his draft).
+//     site text, discard) is ONE atomic commit on the `staging` branch (his draft).
 //   - Commits are compare-and-swap: the branch only moves if nobody else moved
 //     it first. If it did, we re-read and re-apply the change (it is stored as
 //     an intent, e.g. "remove photo X", not as a stale snapshot), so two
@@ -13,21 +13,23 @@
 //     (added, removed, replaced, reordered, stats). Nothing else writes content.
 //
 // "Content" = public/galleries/**/<image>, src/data/galleries/*.json,
-// src/data/stats.json (see gallery-model.mjs isContentPath).
+// src/data/stats.json, src/data/copy.json (see gallery-model.mjs isContentPath).
 
 import { createHash } from "node:crypto";
 import { RefConflictError } from "./github.mjs";
 import { validateImage } from "./images.mjs";
+import { FIELDS, FIELD_BY_KEY, PAGES, cleanText, effectiveText, fieldPaths, problemWith } from "../site-text.mjs";
 import {
-  GALLERY_SLUGS, GALLERY_TITLES, GALLERIES_PREFIX, GALLERY_DATA_PREFIX, STATS_PATH,
+  COPY_PATH, GALLERY_SLUGS, GALLERY_TITLES, GALLERIES_PREFIX, GALLERY_DATA_PREFIX, STATS_PATH,
   IMAGE_EXT, ORIGINAL_COVERS, isContentPath, mergeGallery, movedCount, resolveCover, srcKey,
 } from "../gallery-model.mjs";
 
 export class ContentError extends Error {
-  constructor(code, message, status = 400) {
+  constructor(code, message, status = 400, extra = undefined) {
     super(message);
     this.code = code;
     this.status = status;
+    this.extra = extra;
   }
 }
 
@@ -204,6 +206,25 @@ export function createContentEngine({
     return { stats, value: Number.isFinite(n) && n > 0 ? Math.round(n) : 0 };
   }
 
+  /** Site text: the wording each field shows in `content` (stored wording or the original). */
+  async function readCopy(content) {
+    const data = await readJson(content, COPY_PATH, { text: {} });
+    const values = new Map(FIELDS.map((f) => [f.key, effectiveText(data, f.key)]));
+    return { data, values };
+  }
+
+  /** Site text that differs between the live site and the draft, grouped by page. */
+  async function textChanges(ctx) {
+    const [live, draft] = await Promise.all([readCopy(ctx.mainContent), readCopy(ctx.draftContent)]);
+    const pages = [];
+    for (const page of PAGES) {
+      const fields = FIELDS.filter((f) => f.page === page.id && live.values.get(f.key) !== draft.values.get(f.key))
+        .map((f) => ({ key: f.key, label: f.label, before: live.values.get(f.key), after: draft.values.get(f.key), paths: fieldPaths(f) }));
+      if (fields.length) pages.push({ id: page.id, label: page.label, fields });
+    }
+    return pages;
+  }
+
   async function summarize(ctx) {
     const entries = diffEntries(ctx.mainContent, ctx.draftContent);
     const explained = new Set();
@@ -248,6 +269,8 @@ export function createContentEngine({
 
     const [liveStats, draftStats] = await Promise.all([readStats(ctx.mainContent), readStats(ctx.draftContent)]);
     if (entries.some((e) => e.path === STATS_PATH)) explained.add(STATS_PATH);
+    const text = entries.some((e) => e.path === COPY_PATH) ? await textChanges(ctx) : [];
+    if (text.length) explained.add(COPY_PATH);
     const other = entries.filter((e) => !explained.has(e.path)).length;
 
     const plural = (n, word) => `${n.toLocaleString("en-US")} ${word}${n === 1 ? "" : "s"}`;
@@ -267,6 +290,7 @@ export function createContentEngine({
       const d = draftStats.value - liveStats.value;
       lines.push(`Moments Captured: ${liveStats.value.toLocaleString("en-US")} → ${draftStats.value.toLocaleString("en-US")} (${d > 0 ? "+" : "−"}${Math.abs(d).toLocaleString("en-US")})`);
     }
+    for (const page of text) lines.push(`Site text, ${page.label}: ${plural(page.fields.length, "change")}`);
     if (galleries.some((g) => g.housekeeping) || other) lines.push("Behind-the-scenes gallery tidy-up");
 
     return {
@@ -274,6 +298,7 @@ export function createContentEngine({
       changedFiles: entries.length,
       galleries,
       stats: { live: liveStats.value, draft: draftStats.value },
+      text,
       lines,
     };
   }
@@ -346,6 +371,23 @@ export function createContentEngine({
         alt: i.alt || "",
         ...photoUrls(ctx, ctx.stagingHead, i),
         isNew: ctx.mainContent.get("public" + i.src) !== i.sha,
+      })),
+    };
+  }
+
+  /** Everything the Site text page needs: every field with its draft and live wording. */
+  async function siteTextFrom(ctx) {
+    const [live, draft] = await Promise.all([readCopy(ctx.mainContent), readCopy(ctx.draftContent)]);
+    const used = new Set(FIELDS.map((f) => f.page));
+    return {
+      draftSha: ctx.stagingHead,
+      pages: PAGES.filter((p) => used.has(p.id)).map(({ id, label }) => ({ id, label })),
+      fields: FIELDS.map((f) => ({
+        key: f.key, page: f.page, label: f.label, help: f.help || "", kind: f.kind, max: f.max,
+        maxParagraphs: f.maxParagraphs || null,
+        value: draft.values.get(f.key),
+        live: live.values.get(f.key),
+        original: f.default,
       })),
     };
   }
@@ -430,6 +472,11 @@ export function createContentEngine({
     summarize,
     stateFrom,
     galleryFrom,
+    siteTextFrom,
+
+    async siteText(hints) {
+      return siteTextFrom(await loadContext(hints));
+    },
 
     async state(hints) {
       return stateFrom(await loadContext(hints));
@@ -612,6 +659,60 @@ export function createContentEngine({
         const { cover: previous, ...rest } = view.data;
         await writeJson(work, newBlobs, view.jsonPath, next === null ? rest : { cover: next, ...rest });
         return { cover: next, previous: typeof previous === "string" ? previous : null };
+      }, hints);
+    },
+
+    /**
+     * Save site text. changes: [{ key, value, expected }], where `expected` is the wording
+     * Jacob saw when he started editing. If any field has changed since (another device,
+     * another tab), nothing is saved and the conflicting fields are listed. Only
+     * src/data/copy.json is written. Wording equal to the original is stored as "no
+     * change", so putting the original back leaves nothing to publish.
+     */
+    async setText(changes, hints) {
+      if (!Array.isArray(changes) || !changes.length) throw new ContentError("no_text", "Nothing to save.");
+      if (changes.length > FIELDS.length) throw new ContentError("bad_text", "Too many changes at once.");
+      const wanted = new Map();
+      const problems = [];
+      for (const c of changes) {
+        const field = FIELD_BY_KEY.get(c?.key);
+        if (!field || wanted.has(field.key) || typeof c.expected !== "string") {
+          throw new ContentError("bad_text", "The text couldn't be saved. Please refresh the page.");
+        }
+        const cleaned = cleanText(c.value, field);
+        const problem = cleaned === null ? "isn't text" : problemWith(cleaned, field);
+        if (problem) {
+          const page = PAGES.find((p) => p.id === field.page).label;
+          problems.push({ key: field.key, message: `${page} · ${field.label} ${problem}.` });
+        }
+        wanted.set(field.key, { field, value: cleaned, expected: c.expected });
+      }
+      if (problems.length) {
+        throw new ContentError("invalid_text", problems.map((p) => p.message).join(" "), 400, { fields: problems });
+      }
+      return change(`Update site text (${[...new Set([...wanted.values()].map((w) => w.field.page))].join(", ")})`, async (ctx, work, newBlobs) => {
+        const { data, values } = await readCopy(work);
+        const conflicts = [...wanted.values()].filter((w) => values.get(w.field.key) !== w.expected);
+        if (conflicts.length) {
+          throw new ContentError("text_conflict",
+            `${conflicts.map((w) => w.field.label).join(", ")} changed somewhere else since you opened this. Your wording wasn't saved. Check the latest text, then try again.`,
+            409, { fields: conflicts.map((w) => ({ key: w.field.key, current: values.get(w.field.key) })) });
+        }
+        const stored = data.text && typeof data.text === "object" && !Array.isArray(data.text) ? { ...data.text } : {};
+        const saved = [];
+        for (const w of wanted.values()) {
+          const before = values.get(w.field.key);
+          if (w.value === before) continue;
+          if (w.value === w.field.default) delete stored[w.field.key];
+          else stored[w.field.key] = w.value;
+          saved.push({ key: w.field.key, before, after: w.value });
+        }
+        // Known fields in a stable order, anything else kept as it was.
+        const text = {};
+        for (const f of FIELDS) if (Object.hasOwn(stored, f.key)) text[f.key] = stored[f.key];
+        for (const k of Object.keys(stored)) if (!Object.hasOwn(text, k)) text[k] = stored[k];
+        if (saved.length) await writeJson(work, newBlobs, COPY_PATH, { ...data, text });
+        return { saved };
       }, hints);
     },
 

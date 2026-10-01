@@ -1,6 +1,7 @@
 ---
 import Layout from "../layouts/Layout.astro";
 import { gear, software } from "../data/tools";
+import { text, paragraphs } from "../lib/copy";
 ---
 <Layout title="About — Jacob Combs">
   <!-- Intro: headline beside a portrait (editorial, balanced) -->
@@ -11,8 +12,8 @@ import { gear, software } from "../data/tools";
           <span class="h-px w-7 bg-accent inline-block"></span> About
         </p>
         <h1 class="font-display font-medium text-4xl sm:text-5xl tracking-[-0.02em] leading-[1.08]">
-          <span class="text-fog">Jacob Combs is a sports photographer who turns</span>
-          split-seconds into shots worth keeping.
+          <span class="text-fog">{text("about.headline.muted")}</span>
+          {text("about.headline.strong")}
         </h1>
         <img src="/jacob-signature.png" alt="Jacob Combs signature" data-sign class="sign-write mt-8 h-16 sm:h-20 w-auto" />
       </div>
@@ -33,29 +34,12 @@ import { gear, software } from "../data/tools";
       </div>
       <div data-reveal style="animation-delay:100ms" class="max-w-2xl">
         <h2 class="font-display font-medium text-2xl sm:text-4xl tracking-[-0.02em] leading-[1.15] mb-8">
-          I know how much a single picture can truly mean to someone.
+          {text("about.bio.heading")}
         </h2>
         <div class="space-y-5 text-fog text-[17px] leading-relaxed">
-          <p>
-            It started with my mom's camera. I picked it up, started shooting some of my
-            buddies' games, and one thing led to another — a few clients turned into more,
-            and it's grown from there.
-          </p>
-          <p>
-            I love shooting sports because I grew up an athlete, so I know how much a single
-            picture can truly mean to someone. That's what keeps me chasing the moment every
-            time I'm out there.
-          </p>
-          <p>
-            Working with me is easy — I keep the mood light and I want you smiling the whole
-            time. I'm always trying to learn more about my clients to make a real connection,
-            because to me it's more than just pictures. It's the human side of it, and getting
-            a genuine smile out of you.
-          </p>
-          <p>
-            Off the clock, I'm a sophomore at Michigan State in the Eli Broad College of
-            Business, majoring in marketing.
-          </p>
+          {paragraphs("about.bio.body").map((p) => (
+            <p>{p}</p>
+          ))}
         </div>
       </div>
     </div>
@@ -69,10 +53,10 @@ import { gear, software } from "../data/tools";
       </div>
       <div data-reveal style="animation-delay:120ms" class="order-first lg:order-none">
         <p class="text-fog tracking-[0.25em] uppercase text-[11px] mb-6 flex items-center gap-3">
-          <span class="h-px w-7 bg-accent inline-block"></span> Behind the lens
+          <span class="h-px w-7 bg-accent inline-block"></span> {text("about.lens.label")}
         </p>
         <p class="font-display font-medium text-2xl sm:text-3xl tracking-[-0.02em] leading-[1.25]">
-          <span class="text-fog">Camera in hand,</span> right where I belong.
+          <span class="text-fog">{text("about.lens.muted")}</span> {text("about.lens.strong")}
         </p>
       </div>
     </div>

@@ -18,6 +18,7 @@ import { createContentEngine } from "../../src/lib/admin/content.mjs";
 import { createAuth } from "../../src/lib/admin/auth.mjs";
 import { createHandler } from "../../src/lib/admin/handler.mjs";
 import { GALLERY_SLUGS, ORIGINAL_COVERS, mergeGallery, resolveCover } from "../../src/lib/gallery-model.mjs";
+import { FIELDS, effectiveText, fieldPaths } from "../../src/lib/site-text.mjs";
 
 const PORT = Number(process.argv[2] || 4400);
 const ROOT = process.env.PUBLIC_ROOT || new URL("../../public/", import.meta.url).pathname;
@@ -36,6 +37,7 @@ const fake = createFakeGitHub();
 const files = {
   "src/pages/index.astro": "<h1>code</h1>",
   "src/data/stats.json": JSON.stringify({ photosTaken: 68527 }, null, 2) + "\n",
+  "src/data/copy.json": JSON.stringify({ text: {} }, null, 2) + "\n", // ships empty, like production
 };
 for (const slug of GALLERY_SLUGS) files[`src/data/galleries/${slug}.json`] = JSON.stringify({ images: [] }, null, 2) + "\n";
 const baseball = [];
@@ -67,6 +69,7 @@ if (process.env.REAL_PHOTOS) {
     if (existsSync(json)) files[json] = readFileSync(json, "utf8");
   }
   files["src/data/stats.json"] = readFileSync("src/data/stats.json", "utf8");
+  files["src/data/copy.json"] = readFileSync("src/data/copy.json", "utf8");
   for (const name of readdirSync("public/covers")) files[`public/covers/${name}`] = readFileSync(`public/covers/${name}`);
 }
 const initial = fake.seed("main", files);
@@ -110,7 +113,12 @@ function livePage(pathname) {
     const { src } = resolveCover({ cover: data.cover, images, original: ORIGINAL_COVERS[slug]?.src, exists: (p) => !!content["public" + p] });
     return src ? `<img src="${src}" alt="${slug}" />` : `<div class="placeholder"></div>`;
   }).join("");
-  if (pathname === "/work/sports/") return `<!doctype html><title>sports</title>${tiles(SPORTS)}`;
+  // Site text on each page (escaped, like the real site), from the live copy.json.
+  const copy = content["src/data/copy.json"] ? JSON.parse(content["src/data/copy.json"]) : {};
+  const esc = (t) => t.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+  const words = (path) => FIELDS.filter((f) => fieldPaths(f).includes(path)).map((f) => effectiveText(copy, f.key).split("\n\n").map((p) => `<p>${esc(p)}</p>`).join("")).join("");
+  if (pathname === "/work/sports/") return `<!doctype html><title>sports</title>${tiles(SPORTS)}${words(pathname)}`;
+  if (["/photo-video/", "/about/", "/contact/", "/call/", "/thanks/"].includes(pathname)) return `<!doctype html><title>page</title>${words(pathname)}`;
   const m = pathname.match(/^\/work\/(?:sports\/)?([a-z]+)\/$/);
   if (m && GALLERY_SLUGS.includes(m[1]) && (SPORTS.includes(m[1]) === pathname.startsWith("/work/sports/"))) {
     const slug = m[1];
@@ -118,11 +126,11 @@ function livePage(pathname) {
     const listed = json ? JSON.parse(json).images || [] : [];
     const disk = Object.keys(content).filter((p) => p.startsWith(`public/galleries/${slug}/`)).map((p) => p.slice(6));
     const { images } = mergeGallery(listed, disk);
-    return `<!doctype html><title>${slug}</title>${images.map((i) => `<button data-lightbox data-src="${i.src}"></button>`).join("")}`;
+    return `<!doctype html><title>${slug}</title>${images.map((i) => `<button data-lightbox data-src="${i.src}"></button>`).join("")}${words(pathname)}`;
   }
   if (pathname === "/") {
     const stats = JSON.parse(content["src/data/stats.json"]);
-    return `<!doctype html><title>home</title>${tiles(GALLERY_SLUGS.filter((s) => !SPORTS.includes(s)))}<span data-photo-count data-to="${stats.photosTaken}">${Number(stats.photosTaken).toLocaleString("en-US")}</span>`;
+    return `<!doctype html><title>home</title>${tiles(GALLERY_SLUGS.filter((s) => !SPORTS.includes(s)))}<span data-photo-count data-to="${stats.photosTaken}">${Number(stats.photosTaken).toLocaleString("en-US")}</span>${words("/")}`;
   }
   return null;
 }
@@ -171,6 +179,7 @@ const server = http.createServer(async (req, res) => {
         main, staging, live: deploy.live, uploads, rawHits,
         mainStats: read("main", "src/data/stats.json"), stagingStats: read("staging", "src/data/stats.json"),
         mainBaseball: read("main", "src/data/galleries/baseball.json"), stagingBaseball: read("staging", "src/data/galleries/baseball.json"),
+        stagingCopy: read("staging", "src/data/copy.json"), mainCopy: read("main", "src/data/copy.json"),
         stagingFiles: Object.keys(fake.files("staging")).filter((p) => p.startsWith("public/")),
         mainCommitMessages: [...fake.commits.values()].filter((c) => c.message.includes("Publish")).length,
         mainFiles: Object.keys(fake.files("main")).filter((p) => p.startsWith("public/")),

@@ -1,6 +1,7 @@
 ---
 import Layout from "../layouts/Layout.astro";
 import CategoryTiles from "../components/CategoryTiles.astro";
+import { text } from "../lib/copy";
 ---
 <Layout title="Photo & Video — Jacob Combs">
   <section class="mx-auto max-w-[1400px] px-6 sm:px-10 pt-28 sm:pt-32 pb-2">
@@ -9,7 +10,7 @@ import CategoryTiles from "../components/CategoryTiles.astro";
         <span class="h-px w-7 bg-accent inline-block"></span> Photo &amp; Video
       </p>
       <h1 class="font-display font-medium text-4xl sm:text-6xl tracking-[-0.02em]">My Work</h1>
-      <p class="text-fog mt-4 sm:mt-5 max-w-xl">Pick a category to dive in — every gallery is a real moment, frozen.</p>
+      <p class="text-fog mt-4 sm:mt-5 max-w-xl">{text("work.intro")}</p>
     </div>
   </section>
   <CategoryTiles showIntro={false} />

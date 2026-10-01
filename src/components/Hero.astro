@@ -1,4 +1,5 @@
 ---
+import { text } from "../lib/copy";
 ---
 <section data-hero class="relative min-h-[100svh] flex items-end overflow-hidden">
   <!-- restrained purple light behind the subject (on-brand, not loud) -->
@@ -43,7 +44,7 @@
       <div class="flex flex-col lg:flex-row lg:items-end lg:justify-between gap-6 lg:gap-10">
         <div class="relative inline-block">
           <p class="hero-rise text-accent font-medium tracking-[0.28em] uppercase text-[10px] sm:text-[11px] mb-3 sm:mb-5 flex items-center gap-3" style="--d:200ms">
-            <span class="h-px w-6 sm:w-7 bg-accent inline-block"></span> Freelance Photographer
+            <span class="h-px w-6 sm:w-7 bg-accent inline-block"></span> {text("home.hero.kicker")}
           </p>
           <h1 class="font-display font-medium leading-[0.9] tracking-[-0.02em] text-5xl sm:text-7xl lg:text-[7rem]">
             <span class="hero-rise-line"><span class="hero-rise-inner" style="--d:320ms">Jacob Combs</span></span>
@@ -55,7 +56,7 @@
 
         <div class="max-w-xs lg:text-right lg:pb-3">
           <p class="hero-rise text-fog leading-relaxed mb-5 sm:mb-7 text-[14px] sm:text-[15px]" style="--d:620ms">
-            A collection of creativity, passion &amp; perspective — a look at the shots I love most.
+            {text("home.hero.intro")}
           </p>
           <div class="hero-rise flex flex-wrap gap-3 lg:justify-end" style="--d:780ms">
             <a href="/photo-video" class="btn btn-solid px-6 py-2.5 text-sm">View Work</a>

@@ -4,10 +4,8 @@ export const site = {
   brand: "jc_wrks",
   role: "Freelance Photographer",
   email: "jacobcombsphotography@gmail.com",
-  // response expectation shown on Contact/Book
-  responseTime: "within 24 hours",
-  // home base Metro Detroit; at Michigan State (East Lansing) Sept–May
-  coverage: "Metro Detroit & East Lansing, MI",
+  // Reply time and coverage area are site text Jacob edits in /admin
+  // (src/lib/site-text.mjs: site.responseTime, site.coverage).
   socials: {
     instagram: { label: "Instagram", handle: "jc_wrks", url: "https://instagram.com/jc_wrks" },
     tiktok: { label: "TikTok", handle: "jc_wrks1", url: "https://tiktok.com/@jc_wrks1" },

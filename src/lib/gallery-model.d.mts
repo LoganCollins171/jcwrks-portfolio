@@ -4,6 +4,7 @@ export declare const IMAGE_EXT: RegExp;
 export declare const GALLERIES_PREFIX: string;
 export declare const GALLERY_DATA_PREFIX: string;
 export declare const STATS_PATH: string;
+export declare const COPY_PATH: string;
 export declare function isContentPath(path: string): boolean;
 export declare function srcKey(src: string): string;
 export declare function naturalCompare(a: string, b: string): number;
